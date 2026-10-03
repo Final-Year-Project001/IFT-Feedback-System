@@ -763,8 +763,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
    square that clashes with this light theme. Give it a matching light
    background, and make sure it fully occludes anything behind it
    (some browsers draw their own password-manager icon in the same
-   corner, which can visually collide with this button otherwise). */
-[data-testid="stTextInput"] [data-testid="InputInstructions"],
+   corner, which can visually collide with this button otherwise).
+
+   NOTE: `[data-testid="InputInstructions"]` was previously caught by this
+   rule. That element is Streamlit's "Press Enter to submit form" hint —
+   a small text label, not a button. Giving it an opaque background and
+   `z-index: 2` painted a white box over the input text, making it
+   impossible to see what you were typing. It is now styled separately
+   below. */
 [data-testid="stTextInput"] button[title*="password" i],
 [data-testid="stTextInput"] div[data-baseweb="input"] button {
     background: var(--navy-card2) !important;
@@ -772,6 +778,21 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
     position: relative;
     z-index: 2;
+}
+
+/* Streamlit's "Press Enter to submit form" hint. Rendered inside the
+   input container; without this rule it inherits no styling and can
+   overlap the text being typed. Make it a small, unobtrusive label. */
+[data-testid="InputInstructions"] {
+    font-size: .75rem !important;
+    color: var(--text-3) !important;
+    background: transparent !important;
+    border: none !important;
+    padding: .15rem 0 !important;
+    margin: 0 !important;
+    position: static !important;
+    z-index: auto !important;
+    pointer-events: none !important;
 }
 [data-testid="stTextInput"] div[data-baseweb="input"] button svg {
     fill: var(--text-2) !important;
