@@ -140,7 +140,7 @@ class _FakeConn:
         return _FakeCursor()
 
 
-_conn = db_backend._PostgresConnection(_FakeConn())
+_conn = db_backend._PostgresConnection(_FakeConn(), "postgresql://fake")
 _cur = _conn.cursor()
 check("conn.cursor() returns a translating cursor, not the raw driver cursor",
       isinstance(_cur, db_backend._TranslatingCursor))
@@ -207,7 +207,7 @@ class _BoomConn:
         _BoomCursor.rollback_called.append(True)
 
 
-_bc = db_backend._PostgresConnection(_BoomConn())
+_bc = db_backend._PostgresConnection(_BoomConn(), "postgresql://fake")
 try:
     _bc.execute("SELECT * FROM t WHERE a = ?", ("x",))
     check("a failed statement raises", False, "no exception was raised")

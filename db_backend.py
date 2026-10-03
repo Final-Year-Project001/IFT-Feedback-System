@@ -191,23 +191,43 @@ class _TranslatingCursor:
     against PostgreSQL, on the most-used read in the application. Translating at
     the cursor removes the whole class of bypass, rather than patching the one
     call site that happened to be noticed.
+
+    It holds its parent so that a statement failing on a dead connection can be
+    retried on a fresh one — see `_retryable`.
     """
 
-    def __init__(self, cursor):
+    def __init__(self, cursor, parent=None):
         self._cursor = cursor
+        self._parent = parent
 
     def execute(self, sql, *args, **kwargs):
         text = translate(sql)
         if not text.strip():
             return self
-        self._cursor.execute(text, *args, **kwargs)
+        try:
+            self._cursor.execute(text, *args, **kwargs)
+        except Exception:
+            if self._parent is None or not self._parent._retryable():
+                raise
+            # Dead connection, not bad SQL. Reopen and take a fresh cursor —
+            # the old one belongs to the socket that just died.
+            self._parent._reopen()
+            self._cursor = self._parent._new_cursor()
+            self._cursor.execute(text, *args, **kwargs)
         return self
 
     def executemany(self, sql, *args, **kwargs):
         text = translate(sql)
         if not text.strip():
             return self
-        self._cursor.executemany(text, *args, **kwargs)
+        try:
+            self._cursor.executemany(text, *args, **kwargs)
+        except Exception:
+            if self._parent is None or not self._parent._retryable():
+                raise
+            self._parent._reopen()
+            self._cursor = self._parent._new_cursor()
+            self._cursor.executemany(text, *args, **kwargs)
         return self
 
     def __getattr__(self, name):
@@ -228,10 +248,59 @@ class _PostgresConnection:
 
     The object returned by `execute` is the driver's own cursor, so every
     `fetchone` / `fetchall` / `rowcount` behaves exactly as it does today.
+
+    It also owns recovery. A hosted database's connection dies when the container
+    sleeps or the server suspends, and this shim is what `st.cache_resource`
+    holds onto. So when a statement fails, this distinguishes "the socket died"
+    from "the query was wrong" and replaces the socket in the first case, rather
+    than leaving the cache holding an object that can never work again.
     """
 
-    def __init__(self, conn):
+    def __init__(self, conn, url):
         self._conn = conn
+        self._url = url
+
+    def _retryable(self, exc: Exception) -> bool:
+        """True when a failure was the connection dying, not a bad statement.
+
+        This distinction is the whole safety of the retry below, because the two
+        cases look similar on screen and must not be handled the same way:
+        retrying bad SQL just fails again and, worse, a retried write can
+        double-apply. psycopg answers the question directly — `closed` once it
+        knows the connection is gone, `broken` once an error has left it
+        unusable — and neither is set by an ordinary constraint violation.
+        """
+        # Only retry on connection-class errors. The error types that matter
+        # are OperationalError, InterfaceError, InternalError — anything that
+        # means "the wire broke". A generic RuntimeError from a test, or a
+        # TranslationError we wrapped, must not be retried.
+        import psycopg
+        if not isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError, psycopg.InternalError)):
+            return False
+        try:
+            return bool(self._conn.closed or self._conn.broken)
+        except Exception:
+            return False
+
+    def _reopen(self):
+        """Replace the dead connection underneath this shim.
+
+        The shim's *identity* is deliberately preserved. `st.cache_resource`
+        hands back the exact object it cached, so returning a new shim would mean
+        every caller holding the old one keeps using the dead socket, while the
+        database silently accumulates a second connection per reconnect.
+        Swapping what is inside is invisible to the cache and fixes everyone at
+        once.
+        """
+        import psycopg
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        self._conn = psycopg.connect(self._url, connect_timeout=10)
+
+    def _new_cursor(self):
+        return _TranslatingCursor(self._conn.cursor(), self)
 
     # ── the two methods that need translating ────────────────────────────────
     def execute(self, sql, params=()):
@@ -241,6 +310,12 @@ class _PostgresConnection:
         try:
             return self._conn.execute(text, params)
         except Exception as exc:
+            if self._retryable(exc):
+                self._reopen()
+                try:
+                    return self._conn.execute(text, params)
+                except Exception as retry_exc:
+                    exc = retry_exc
             # Roll back before propagating. PostgreSQL aborts the whole
             # transaction on the first failure and then refuses every subsequent
             # statement with `InFailedSqlTransaction`, so one bad query turns the
@@ -259,13 +334,19 @@ class _PostgresConnection:
         text = translate(sql)
         if not text.strip():
             return _EmptyCursor()
-        return self._conn.executemany(text, seq)
+        try:
+            return self._conn.executemany(text, seq)
+        except Exception as exc:
+            if self._retryable(exc):
+                self._reopen()
+                return self._conn.executemany(text, seq)
+            raise
 
     # ── everything else is delegated untouched ──────────────────────────────
     def cursor(self, *a, **k):
         # Wrapped, not raw: see _TranslatingCursor. Anything that grabs a cursor
         # to run SQL on it — pandas included — gets the translation for free.
-        return _TranslatingCursor(self._conn.cursor(*a, **k))
+        return self._new_cursor()
 
     def commit(self):
         self._conn.commit()
@@ -322,7 +403,9 @@ def connect():
     # `connect_timeout` matters on Cloud: a misconfigured or unreachable host
     # should fail in seconds, not hang until the platform kills the container.
     conn = psycopg.connect(url, connect_timeout=10)
-    return _PostgresConnection(conn)
+    # The URL is kept so `_reopen` can rebuild the connection after the host
+    # suspends it, without having to re-read and re-parse configuration.
+    return _PostgresConnection(conn, url)
 
 
 def probe(url: str | None = None, timeout: int = 10) -> dict:

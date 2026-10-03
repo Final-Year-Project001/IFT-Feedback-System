@@ -265,7 +265,22 @@ def _connect():
     # expired entry. `get_db()` (below) keeps it current from then on — this
     # call alone would only ever fire once per process, which is exactly the
     # bug that made the trail grow forever.
-    _purge_expired_audit_rows(conn)
+    #
+    # Best-effort, and the rollback is isolated in its own try/except. This runs
+    # while the schema is still being built, so an exception here propagates out
+    # of `_connect()` and takes down every page of the app — housekeeping
+    # deleting an old audit row is not worth that. It also had no commit: on
+    # PostgreSQL that left the DELETE sitting in an open transaction forever
+    # ("idle in transaction"), which free-tier hosts routinely kill, and which
+    # meant the sweep's deletions were never actually persisted.
+    try:
+        _purge_expired_audit_rows(conn)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     return conn
 
 
@@ -274,6 +289,65 @@ def _connect():
 # DELETE that usually matches zero rows).
 _SWEEP_INTERVAL_SECONDS = 3600
 _last_sweep_at = 0.0
+
+# How often the connection is checked for being alive. See `_connection_is_alive`
+# for why a cached connection needs checking at all.
+_PING_INTERVAL_SECONDS = 60
+_last_ping_at = 0.0
+
+
+def _connection_is_alive(conn) -> bool:
+    """True when `conn` can still run a statement.
+
+    A connection object outliving its socket is the failure mode this exists to
+    catch. Streamlit containers sleep, and free-tier Postgres suspends the
+    compute or drops idle sessions after a few quiet minutes — but
+    `@st.cache_resource` keeps handing the *same* dead object back for the life
+    of the process. The result is a database error that never clears itself: the
+    app stays broken until somebody redeploys, and the traceback points at
+    whichever innocent statement happened to run first (here, the audit
+    retention DELETE) rather than at the dropped connection that caused it.
+
+    The free checks come first because they cost nothing and catch the obvious
+    cases — psycopg sets `closed` once it knows, and `broken` after an error.
+    Neither is sufficient on its own: a socket that died silently is neither,
+    which is why a real statement is still sent.
+    """
+    if getattr(conn, "closed", False) is True:
+        return False
+    if getattr(conn, "broken", False) is True:
+        return False
+    try:
+        conn.execute("SELECT 1")
+    except Exception:
+        return False
+    try:
+        # A read still opens a transaction on PostgreSQL. Leaving one open holds
+        # a pooled server connection for the rest of the idle interval, so close
+        # it immediately rather than letting the ping leak.
+        conn.commit()
+    except Exception:
+        pass
+    return True
+
+
+def _reconnect(conn):
+    """Discard a dead cached connection and open a fresh one.
+
+    `_connect()` is cached, so a new object is only ever produced by clearing
+    the cache first. The old connection is closed beforehand: leaving a socket
+    open against a suspended server is how a process ends up holding connections
+    the host has already given away.
+    """
+    try:
+        conn.close()
+    except Exception:
+        pass
+    try:
+        _connect.clear()
+    except Exception:
+        pass
+    return _connect()
 
 
 def get_db():
@@ -289,9 +363,22 @@ def get_db():
     trail kept accumulating expired entries indefinitely and an administrator
     saw deletions that should have aged out weeks earlier. The fix is to make
     the cache hold only the connection, and put the time-gated work outside it.
+
+    It also owns the connection's health, for the same reason: checking liveness
+    inside the cached function could never work, because a cached function does
+    not run again.
     """
-    global _last_sweep_at
+    global _last_sweep_at, _last_ping_at
     conn = _connect()
+
+    # Liveness first, before anything is sent over it. Recovering here means the
+    # dead connection is replaced quietly on the next page load instead of
+    # throwing, which is the difference between a blip and a dead app.
+    now = time.time()
+    if now - _last_ping_at >= _PING_INTERVAL_SECONDS:
+        _last_ping_at = now
+        if not _connection_is_alive(conn):
+            conn = _reconnect(conn)
 
     # Durable-backup heartbeat. This is the cheapest possible call — a stat and
     # a comparison — and it only does work when a backup repository is actually
@@ -309,10 +396,21 @@ def get_db():
         _last_sweep_at = now
         try:
             _purge_expired_audit_rows(conn)
+            # Commit it. Uncommitted, the DELETE stayed open as an idle
+            # transaction that some hosts terminate — taking the connection with
+            # them, and the sweep's own work with it.
+            conn.commit()
         except Exception:
             # Housekeeping must never take the app down with it. A failed sweep
             # means an expired entry lingers until the next one succeeds.
-            conn.rollback()
+            #
+            # The rollback is wrapped in its own try because a failed purge can
+            # leave the connection in a state where rollback itself raises —
+            # which would mask the original error and make the app unbootable.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     return conn
 
 
