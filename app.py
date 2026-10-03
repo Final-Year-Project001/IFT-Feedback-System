@@ -1,0 +1,535 @@
+"""
+app.py — FUTO IFT Smart Feedback System (v4, restructured)
+===========================================================
+Entry point only: page config, global CSS injection, session-based auth
+gate, sidebar, and page routing. All real page logic lives in
+`app_pages/`, all shared helpers in `components.py` / `charts.py` /
+`icons.py`.
+
+IMPORTANT — why this project's page-logic folder is named `app_pages/`
+and not `pages/`: Streamlit treats any folder literally named `pages/`
+sitting next to the entry-point script as a reserved name that triggers
+its own *automatic* multi-page navigation feature — it silently injects
+an extra, unstyled navigation list into the sidebar built from the raw
+filenames it finds there, on top of (and independent from) whatever
+sidebar this app builds itself below. Since this project deliberately
+implements its own role-based routing (see `main()`), that folder is
+named `app_pages/` specifically to opt out of Streamlit's automatic
+behaviour. Do not rename it back to `pages/`.
+
+Run with:  streamlit run app.py
+"""
+
+import sys
+
+import streamlit as st
+
+import st_compat
+
+import db
+import storage
+from styles import GLOBAL_CSS
+from config import CATEGORIES, CAT_META, ADMIN_SEED_ACCOUNTS, ALL_SESSIONS_LABEL
+from icons import i
+from app_pages.login import show_login_page, show_mandatory_password_change
+from app_pages.home import show_home
+from app_pages.feedback_form import show_feedback_form
+from app_pages.my_stats import show_basic_stats
+from app_pages.admin_overview import show_admin_overview
+from app_pages.full_dashboard import show_full_dashboard
+from app_pages.decision_insights import show_decision_support
+from app_pages.user_management import show_user_management
+from sentiment import engine_status
+from components import esc, render_parked_dialog
+
+st.set_page_config(
+    page_title="Information Technology Feedback System",
+    page_icon="https://unpkg.com/lucide-static@0.462.0/icons/graduation-cap.svg",
+    layout="wide",
+    initial_sidebar_state="auto",
+)
+st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════
+#  MOTION OPT-OUT — `?motion=off`
+# ══════════════════════════════════════════════════════════════
+#
+# `styles.py` cancels every looping animation when the operating system asks for
+# reduced motion (`prefers-reduced-motion: reduce` on Windows, macOS "Reduce
+# motion", iOS). That is the correct default and it is what most people want.
+#
+# But it is an OS-level switch that is easy to set once and forget, and the
+# result is a site that looks simply static with nothing on screen explaining
+# why. This is the escape hatch: append `?motion=off` to any URL in this app to
+# cancel the animations even on a machine that allows them, or `?motion=on` to
+# restore them on a machine that does not. The URL travels with the session
+# token, so the choice survives a refresh.
+#
+# The override has to live in Python rather than in the stylesheet, because a CSS
+# media query cannot read a query parameter. It is injected after GLOBAL_CSS so
+# that it wins on source order, and it is deliberately small: it re-enables the
+# decorative loops and restores real durations, without touching the cascade of
+# anything else.
+_MOTION_ON = """
+<style id="motion-override">
+@keyframes headerShimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position:  200% center; }
+}
+.page-header::after {
+    animation: headerShimmer 8s linear infinite !important;
+}
+.page-header h1 {
+    animation: headerShimmer 6s linear infinite !important;
+}
+.login-title-gradient {
+    animation: textShimmer 4s linear infinite !important;
+}
+.pulse-dot {
+    animation: pulse 1.8s infinite !important;
+}
+.engine-indicator-dot {
+    animation: engine-pulse-anim 2s infinite ease-in-out !important;
+}
+.metric-card:hover,
+.cat-card:hover,
+.insight-card:hover,
+.login-feature-card:hover {
+    transform: translateY(-3px) !important;
+}
+</style>
+"""
+
+_MOTION_OFF = """
+<style id="motion-override">
+*, *::before, *::after {
+    animation: none !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+}
+</style>
+"""
+
+_motion_pref = (st.query_params.get("motion") or "").strip().lower()
+if _motion_pref == "off":
+    st.markdown(_MOTION_OFF, unsafe_allow_html=True)
+elif _motion_pref == "on":
+    st.markdown(_MOTION_ON, unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════
+#  RESTORE THE DATABASE BEFORE ANYTHING READS IT
+# ══════════════════════════════════════════════════════════════
+#
+# Order matters here. On a cloud host the container's disk is wiped whenever the
+# app sleeps, restarts or is redeployed, so a fresh process finds no database at
+# all — and the very next line would create an empty one and re-seed the default
+# administrator, making the app look healthy while every account, feedback record
+# and audit entry had silently vanished.
+#
+# `restore_if_missing` fetches the stored copy from the backup repository when
+# this container has no database of its own. It does nothing when no backup is
+# configured, so local runs are unaffected, and it validates the download before
+# overwriting anything — a truncated or corrupt copy is ignored rather than
+# allowed to destroy good data.
+if storage is not None:
+    try:
+        storage.restore_if_missing()
+    except Exception:
+        # A storage problem must never stop the app from starting.
+        pass
+
+db.seed_admins(ADMIN_SEED_ACCOUNTS)
+
+
+# ══════════════════════════════════════════════════════════════
+#  SESSION PERSISTENCE ACROSS A BROWSER REFRESH
+# ══════════════════════════════════════════════════════════════
+#
+# The problem: `st.session_state` lives in the server process and is tied to a
+# websocket. A browser refresh drops that websocket, so on the next run
+# `password_correct` is gone and `main()` sends the user back to the login
+# page — losing their place on whatever page they were reading.
+#
+# The fix: keep the auth state in a table and look it up again on every run,
+# keyed by a token that lives in the URL's query string. Query params DO
+# survive a refresh (the browser re-requests the same URL), so the run after a
+# refresh finds the same token, looks up the same row, and restores the same
+# signed-in user.
+#
+# WHY A TOKEN AND NOT A SINGLE GLOBAL FILE — the obvious shortcut, and a
+# serious vulnerability: writing one file that says "this is the logged-in
+# user" and reloading it means the FIRST person to sign in becomes the
+# signed-in user for *everyone* on the deployment, including a browser that
+# has never authenticated. On a shared machine or a public demo that is a
+# privilege-escalation hole, not a UX convenience. A per-browser secret token
+# means a browser can only ever restore the session it created; a browser
+# with no token stays on the login page, and a forged or unknown token is
+# simply not found.
+#
+# The token is `secrets.token_urlsafe(32)` (~256 bits of entropy), stored in
+# the URL, and compared in constant time. It is an authentication *session*
+# identifier, not a password, and it carries no privilege of its own — the
+# role and level are re-read from the `users` table on every run, so a role
+# change takes effect on the user's next interaction rather than persisting
+# in the token.
+#
+# Sign-out deletes the row. Expired rows are swept on every write.
+
+import json
+import secrets
+import time
+
+_SESSION_PARAM = "futo_sess"        # query-param name carrying the token
+_SESSION_TOKEN_KEY = "futo_session_token"  # session_state mirror of it
+
+# AppTest drives the script through a `LocalScriptRunner` instead of the real
+# websocket runner, and that is a property of the RUN, not of this module — so
+# it is the thing to test, rather than sniffing for "pytest" in sys.modules
+# (which is absent when the suite is run directly by `run_all.py`).
+#
+# Persistence is switched off under AppTest for two reasons: there is no
+# browser to keep signed in, and writing a row would let a test that signs in
+# as an administrator leak that state into a later `fresh()` that is supposed
+# to see the login page. The token itself is already per-AppTest (each
+# `AppTest.from_file()` starts with empty query params), so the rows could not
+# collide — this simply keeps the test's database copy clean.
+def _is_test_run() -> bool:
+    if "pytest" in sys.modules or "unittest" in sys.modules:
+        return True
+    try:
+        runner = st.runtime.scriptrunner
+        return type(runner).__name__ == "LocalScriptRunner"
+    except Exception:
+        return False
+
+
+_SESSION_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS web_sessions (
+    token      TEXT PRIMARY KEY,
+    username   TEXT NOT NULL,
+    payload    TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    seen_at    REAL NOT NULL
+)
+"""
+
+SESSION_TTL_SECONDS = 7 * 24 * 3600  # one week
+
+
+def _session_token() -> str:
+    """This browser's session token, read from the URL, minted if absent.
+
+    Streamlit copies every query param onto the page's links, so a token in
+    the URL is carried through the app's own navigation without extra work.
+    """
+    try:
+        token = st.query_params.get(_SESSION_PARAM, "")
+    except Exception:
+        return ""
+
+    if not token:
+        token = secrets.token_urlsafe(32)
+        try:
+            st.query_params[_SESSION_PARAM] = token
+        except Exception:
+            return ""
+    return token
+
+
+def _persist_session(username: str, payload: dict) -> None:
+    """Writes this browser's auth state, keyed by its own token.
+
+    A no-op under AppTest, where query params and the websocket are both
+    synthetic: there is no browser to keep signed in, and honouring the row
+    would make a test that signs in as an admin leak that state into a
+    subsequent `fresh()` that expects the login page.
+    """
+    if _is_test_run():
+        return
+    token = st.session_state.get(_SESSION_TOKEN_KEY, "")
+    if not token:
+        return
+    now = time.time()
+    try:
+        conn = db.get_db()
+        conn.execute(_SESSION_TABLE_DDL)
+        conn.execute("DELETE FROM web_sessions WHERE seen_at < ?", (now - SESSION_TTL_SECONDS,))
+        conn.execute(
+            """INSERT INTO web_sessions (token, username, payload, created_at, seen_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(token) DO UPDATE SET
+                 username = excluded.username,
+                 payload  = excluded.payload,
+                 seen_at  = excluded.seen_at""",
+            (token, username, json.dumps(payload), now, now),
+        )
+        conn.commit()
+    except Exception:
+        # Persistence is a convenience. If it fails the app still works; the
+        # user just signs in again after a refresh.
+        pass
+
+
+def _restore_session() -> None:
+    """Reloads this browser's auth state, if it signed in before.
+
+    Re-reads the user from the `users` table rather than trusting the stored
+    payload, so a deleted account cannot keep a session alive and a changed
+    role takes effect immediately.
+    """
+    if _is_test_run():
+        return
+    token = st.session_state.get(_SESSION_TOKEN_KEY, "")
+    if not token:
+        return
+    try:
+        conn = db.get_db()
+        conn.execute(_SESSION_TABLE_DDL)
+        row = conn.execute(
+            "SELECT username FROM web_sessions WHERE token = ? AND seen_at >= ?",
+            (token, time.time() - SESSION_TTL_SECONDS),
+        ).fetchone()
+        if not row:
+            return
+        conn.execute("UPDATE web_sessions SET seen_at = ? WHERE token = ?",
+                     (time.time(), token))
+        conn.commit()
+        username = row[0]
+    except Exception:
+        return
+
+    user = db.get_user(username)
+    if user is None:
+        # Signed-in user was deleted while their browser was open.
+        _forget_session()
+        return
+
+    st.session_state["password_correct"] = True
+    st.session_state["username"] = user["username"]
+    # Role and level come from the table, never from the stored payload.
+    st.session_state["user"] = {
+        "name": user["full_name"],
+        "role": user["role"],
+        "level": user["level"],
+        "email": user["email"],
+    }
+    # No password-hash state is cached here. `main()` re-reads the row to decide
+    # whether to hold a legacy account, so a browser refresh mid-migration stays
+    # held and a completed migration releases — with nothing to keep in sync.
+
+
+def _forget_session() -> None:
+    """Drops this browser's persisted row. Called on sign-out and on failure."""
+    token = st.session_state.get(_SESSION_TOKEN_KEY, "")
+    if _is_test_run() or not token:
+        return
+    try:
+        conn = db.get_db()
+        conn.execute(_SESSION_TABLE_DDL)
+        conn.execute("DELETE FROM web_sessions WHERE token = ?", (token,))
+        conn.commit()
+    except Exception:
+        pass
+
+
+# Put this browser's token into session_state FIRST, so both `_restore_session`
+# and any later `_persist_session` in this same run agree on the key.
+st.session_state[_SESSION_TOKEN_KEY] = _session_token()
+_restore_session()
+
+# Nav entries as (semantic page key, icon name, display label)
+STUDENT_NAV = [("Home", "home", "Home")] + [
+    (cat, CAT_META[cat]["icon"], cat) for cat in CATEGORIES
+] + [("My Statistics", "bar-chart", "My Statistics")]
+
+ADMIN_NAV = [
+    ("Overview", "bar-chart", "Overview"),
+    ("Full Dashboard", "search", "Full Dashboard"),
+    ("Decision Insights", "target", "Decision Insights"),
+    # F-04: user management + guarded account deletion. Uses the `user-cog`
+    # Lucide glyph that was already inlined in icons.py but never referenced.
+    ("User Management", "user-cog", "User Management"),
+]
+
+
+def _sidebar(user):
+    role_display = "Administrator" if user["role"] == "admin" else f"Level {user['level']} Student"
+    with st.sidebar:
+        initials = "".join(w[0].upper() for w in (user["name"] or "?").split()[:2]) or "?"
+        st.markdown(
+            f'<div class="sidebar-profile"><div class="sidebar-avatar">{esc(initials)}</div>'
+            f'<div class="sidebar-name">{esc(user["name"])}</div>'
+            f'<div class="sidebar-role">{esc(role_display)}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Academic Session Selector ──
+        available_sessions = db.get_academic_sessions()
+        active_default = db.get_active_session()
+
+        if user["role"] == "admin":
+            session_choices = [ALL_SESSIONS_LABEL] + available_sessions
+        else:
+            session_choices = available_sessions
+
+        if "selected_session" not in st.session_state or st.session_state["selected_session"] not in session_choices:
+            st.session_state["selected_session"] = active_default if active_default in session_choices else session_choices[0]
+
+        curr_sess_idx = session_choices.index(st.session_state["selected_session"]) if st.session_state["selected_session"] in session_choices else 0
+
+        st.markdown(
+            f'<div class="sidebar-label">{i("calendar", 12)} {"Filter Session" if user["role"] == "admin" else "Academic Session"}</div>',
+            unsafe_allow_html=True,
+        )
+        chosen_session = st.selectbox(
+            "Academic Session",
+            session_choices,
+            index=curr_sess_idx,
+            key="academic_session_choice",
+            label_visibility="collapsed",
+        )
+        if chosen_session != st.session_state["selected_session"]:
+            st.session_state["selected_session"] = chosen_session
+            st.rerun()
+
+        selected_session = st.session_state["selected_session"]
+
+        st.markdown("---")
+
+        nav = ADMIN_NAV if user["role"] == "admin" else STUDENT_NAV
+        label = "Analytics Dashboard" if user["role"] == "admin" else "Navigation"
+        st.markdown(f'<div class="sidebar-label">{label}</div>', unsafe_allow_html=True)
+        options = [n[0] for n in nav]
+        selection = st.radio("Navigation", options, label_visibility="collapsed")
+
+        st.markdown("---")
+        st.markdown('<div class="logout-btn">', unsafe_allow_html=True)
+        if st_compat.button("Sign Out", use_container_width=True, key="logout_btn", icon=":material/logout:"):
+            # Drop the persisted row BEFORE clearing session_state, which is
+            # where `_forget_session` reads the token from. Without this the
+            # next refresh would restore the session the user just ended.
+            _forget_session()
+            st.session_state.clear()
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Sentiment Engine live indicator ──
+        try:
+            status = engine_status()
+            eng_label = status.get("active_engine", "VADER Academic Pro")
+            lex_count = status.get("domain_lexicon_terms", 220)
+            is_trained = status.get("trained_model_available", False)
+        except Exception:
+            eng_label = "VADER Academic Pro"
+            lex_count = 220
+            is_trained = False
+
+        engine_dot_color = "#10b981" if is_trained else "#3b82f6"
+
+        st.markdown(
+            f'<div class="sidebar-engine-badge">'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;">'
+            f'<div style="display:flex;align-items:center;gap:.45rem;">'
+            f'<span class="engine-indicator-dot" style="background:{engine_dot_color};box-shadow:0 0 8px {engine_dot_color};"></span>'
+            f'<span style="font-weight:700;font-size:.72rem;color:var(--text-1);">{esc(eng_label)}</span>'
+            f'</div>'
+            f'<span style="font-size:.62rem;font-weight:700;padding:.1rem .45rem;border-radius:999px;'
+            f'background:rgba(37,99,235,.08);color:#2563eb;border:1px solid rgba(37,99,235,.2);">'
+            f'{esc(lex_count)} rules</span>'
+            f'</div>'
+            f'<div style="font-size:.61rem;color:var(--text-3);margin-top:.35rem;display:flex;justify-content:space-between;">'
+            f'<span>Domain-Specialized</span>'
+            f'<span style="color:#059669;font-weight:600;">Calibrated</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            '<div style="margin-top:.7rem;padding:.65rem .85rem;'
+            "background:rgba(16,185,129,.05);border:1px solid rgba(16,185,129,.15);"
+            'border-radius:12px;display:flex;align-items:center;gap:.6rem;">'
+            '<div style="width:7px;height:7px;border-radius:50%;'
+            'background:#10b981;box-shadow:0 0 6px rgba(16,185,129,.6);"></div>'
+            '<div style="flex:1;">'
+            '<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.1em;color:#94a3b8;font-weight:700;">System Status</div>'
+            f'<div style="font-size:.72rem;color:#059669;font-weight:700;margin-top:.05rem;">Online · {esc(selected_session)}</div>'
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        return selection, selected_session
+
+
+def main():
+    # Any flow that completed on a PREVIOUS run parks its result dialog, and
+    # this is the far side of the redirect that shows it.
+    #
+    # It lives in `main()` and not in `show_login_page()` because registration
+    # signs the student straight IN: the run after it lands on the dashboard,
+    # so a hook on the login page would never fire and the dialog would sit
+    # unrendered in session_state forever. `main()` is the one frame every run
+    # passes through, signed in or not.
+    #
+    # Top level on purpose — Streamlit renders a dialog as a page-level modal,
+    # so this must not sit inside a column context.
+    render_parked_dialog()
+
+    if not st.session_state.get("password_correct"):
+        show_login_page()
+        return
+
+    user = st.session_state["user"]
+    username = st.session_state["username"]
+
+    # A legacy unsalted-SHA256 account is signed in but not finished. Hold it
+    # here, before the sidebar, so there is nothing to navigate to until the
+    # hash is replaced — see `show_mandatory_password_change`'s note on why
+    # this is a return and not a banner.
+    #
+    # The row is the ONLY source of truth for that decision. An earlier
+    # version cached it in session_state and accepted either the flag or the
+    # row, which meant a stale flag left over from before the change kept
+    # holding an account that had already been upgraded — a loop the user
+    # cannot get out of, because completing the screen was what cleared the
+    # flag. Reading the row costs one indexed lookup per run and cannot drift.
+    if db.password_is_legacy(username):
+        show_mandatory_password_change(username)
+        return
+
+    selection, selected_session = _sidebar(user)
+
+    if user["role"] == "admin":
+        if selection == "Overview":
+            show_admin_overview(selected_session)
+        elif selection == "Full Dashboard":
+            show_full_dashboard(selected_session)
+        elif selection == "Decision Insights":
+            show_decision_support(user["name"], selected_session)
+        elif selection == "User Management":
+            show_user_management(username, user)
+        else:
+            # B-09: every branch used to be an `if/elif` chain with no `else`.
+            # A nav key that no longer matches (a renamed page, a stale
+            # `selected_session` left over in session_state, a value written
+            # by an older build) matched nothing and rendered a completely
+            # blank page body — no error, no explanation, just the sidebar.
+            st.error(
+                f"The page '{selection}' is no longer available. "
+                "Choose another item from the navigation menu."
+            )
+    else:
+        if selection == "Home":
+            show_home(user, username, selected_session)
+        elif selection in CATEGORIES:
+            show_feedback_form(selection, user, username, selected_session)
+        elif selection == "My Statistics":
+            show_basic_stats(username, selected_session)
+        else:
+            st.error(
+                f"The page '{selection}' is no longer available. "
+                "Choose another item from the navigation menu."
+            )
+
+
+if __name__ == "__main__":
+    main()

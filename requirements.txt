@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  FUTO IFT Feedback System — runtime dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#  Python:  3.12 or newer (developed and verified on 3.13.1).
+#           `.python-version` pins 3.13 for pyenv-based deploys.
+#
+#  Install with:
+#      python -m venv .venv
+#      .venv\Scripts\python -m pip install -r requirements.txt     (Windows)
+#      .venv/bin/python -m pip install -r requirements.txt         (macOS/Linux)
+#      .venv\Scripts\python download_nltk_data.py
+#
+#  Every lower bound below is the version at which a specific line of code in
+#  this repository starts working — not a guess. Every upper bound exists
+#  because a major release past that point has already broken something.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The UI framework. 1.36 is the floor the app is written against; every
+# newer API is reached through `st_compat.py`, which probes for support and
+# falls back, so 1.36 still renders — it just renders a `st.radio` portal
+# switch instead of a segmented control.
+#
+# Verified against 1.64.0. Two notes for whoever bumps this:
+#   * `use_container_width` is deprecated and scheduled for removal. As of
+#     1.64 it still works with a warning. Every call site in the repo is
+#     routed through `st_compat`, which prefers `width="stretch"`, so the
+#     removal is a no-op for this app.
+#   * `multi_class="auto"` is a hard error, not a warning (B-27). Nothing in
+#     this repo uses it; do not reintroduce it.
+streamlit>=1.36.0,<2.0.0
+
+# Tabular data. 2.0 is the floor (the `pd.NA`/nullable-string work in
+# `db.filter_by_username` relies on `.astype("string")` behaving consistently).
+# Verified against 3.0.6. Capped below 4 because pandas majors have repeatedly
+# removed long-deprecated indexing behaviour, and this codebase leans on
+# `.iloc`/`loc`/`iterrows` throughout.
+pandas>=2.0.0,<4.0.0
+
+# Charts. 5.19 is NOT arbitrary: `charts.py` passes `cornerradius=6` to
+# `go.Bar`, which raises `ValueError` on anything older and takes the whole
+# rating chart down. Verified against 7.1.0.
+#
+# Known interaction, recorded so the next person does not lose an afternoon to
+# it: plotly 7 removed `plotly.exceptions.PlotlyEmptyDataError`. Streamlit's
+# `st.plotly_chart` still references that name, so passing an empty figure —
+# `{"data": [], "layout": {}}` — raises `AttributeError: module 'plotly.exceptions'
+# has no attribute 'PlotlyEmptyDataError'` instead of drawing a blank chart.
+# This app is NOT affected: every builder in `charts.py` returns either a
+# `go.Figure` or `None`, always behind an `if df.empty` guard, and callers
+# check for `None` before plotting. If you ever hand `st.plotly_chart` a raw
+# dict, convert it to a `go.Figure` first.
+plotly>=5.19.0,<8.0.0
+
+# Tokenisation helpers for the domain lexicon (used by `sentiment.py` and by
+# `download_nltk_data.py`). 3.8 is the floor. Verified against 3.10.3.
+nltk>=3.8.1,<4.0.0
+
+# Optional. Only needed to *train* a classifier (`train_model.py`) and to read
+# one back — `sentiment.py` imports it lazily and degrades to the rule engine
+# with a visible warning in `engine_problems` if it is missing or the model
+# cannot be loaded. The app is fully functional without it; there is simply no
+# trained model, so every label comes from the rule pipeline.
+scikit-learn>=1.3.0,<2.0.0
+
+# The PostgreSQL driver. Only imported when `FUTO_POSTGRES_URL` is set — see
+# `db_backend.py` — so this is inert for a SQLite deployment and the app runs
+# perfectly without it. `binary` bundles the client library, which matters on
+# cloud hosts where there is no system libpq and no compiler; without it the
+# install either fails or takes far longer than it should.
+#
+# Pinned to the 3.x line: psycopg 3 is the current supported series and is the
+# one the translation layer in `db_backend.py` was written against. The 2.x
+# series is end-of-life and behaves differently around `connect_timeout` and
+# `rowcount` on statements that match no rows — which is exactly what the
+# retention sweep does on every run.
+psycopg[binary]>=3.1.0,<4.0.0
+
+# Transitive, pinned only to keep the resolver from pairing a new major with
+# these versions. Not imported directly anywhere in the repo.
+numpy>=1.24.0,<3.0.0

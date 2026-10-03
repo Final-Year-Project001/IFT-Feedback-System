@@ -1,0 +1,40 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Database (contains real student data — never commit this)
+futo_feedback.db*
+*.db
+*.db-wal
+*.db-shm
+backup/
+
+# Trained sentiment model (regenerate locally with train_model.py)
+model/
+
+# Secrets — never commit real SMTP credentials
+.streamlit/secrets.toml
+.streamlit/.session_test.json
+
+# NLTK downloaded data (re-downloaded via download_nltk_data.py)
+nltk_data/
+
+# OS/editor cruft
+.DS_Store
+.vscode/
+powershell.bat
+
+# Test scratch. The suites in tests/ are committed on purpose — they are the
+# regression gate — but nothing they generate is.
+tests/__pycache__/
+*.tmp
+*.bak
+tests/_last_run.txt
+
+# One-shot local dev artefacts: run-all transcripts and the Streamlit boot log.
+_streamlit.log
+_streamlit_*.log

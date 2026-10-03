@@ -1,0 +1,23 @@
+# Streamlit theme configuration.
+#
+# WHY THIS FILE MATTERS (don't delete it): most of this app's look is
+# controlled by the custom CSS in styles.py, but a few native Streamlit
+# widgets are rendered in ways plain CSS cannot reach — most importantly
+# `st.dataframe()`, whose grid is drawn on an HTML canvas rather than as
+# regular styled HTML elements. Those widgets read Streamlit's actual
+# configured theme directly. Without this file, Streamlit has no
+# explicit theme set and falls back to guessing from the visitor's
+# OS/browser dark-mode preference — which is exactly why tables could
+# render with a jarring black background even though the rest of the
+# page is clearly light-themed. Setting `base = "light"` here, plus
+# colors matching styles.py's palette, makes every native widget
+# (dataframe grids, the password show/hide toggle, popovers, etc.)
+# consistent with the rest of the app regardless of the visitor's
+# system settings.
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f6f8fb"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+font = "sans serif"
