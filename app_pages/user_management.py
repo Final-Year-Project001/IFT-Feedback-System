@@ -148,7 +148,7 @@ def _render_password_reset(username: str):
         "Sets a new password directly. The user is not emailed and no reset code is "
         "issued — hand them the new password over a channel you trust."
     )
-    with st.form(f"um_pw_{username}", clear_on_submit=False):
+    with st.form(f"um_pw_{username}", clear_on_submit=True):
         new_pw = st.text_input("New password", type="password",
                                key=f"um_pw_new_{username}")
         confirm_pw = st.text_input("Confirm new password", type="password",
@@ -162,8 +162,6 @@ def _render_password_reset(username: str):
         else:
             ok, msg = db.admin_set_password(username, new_pw)
             if ok:
-                st.session_state[f"um_pw_new_{username}"] = ""
-                st.session_state[f"um_pw_confirm_{username}"] = ""
                 _park(msg, "success")
                 st.rerun()
             else:
