@@ -197,10 +197,13 @@ def _connect():
     # file that gets translated rather than dropped. Getting it wrong fails at
     # startup, on every deploy, before anyone sees the app.
     if active_backend() == "postgresql":
+        # information_schema is a system view; parameterised queries against it
+        # can fail with OperationalError on some Postgres configurations. Use a
+        # literal table name instead.
         existing_cols = {row[0] for row in conn.execute(
             "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            ("feedback",)).fetchall()}
+            "WHERE table_schema = current_schema() AND table_name = 'feedback'"
+        ).fetchall()}
     else:
         existing_cols = {row[1] for row in
                          conn.execute("PRAGMA table_info(feedback)").fetchall()}
