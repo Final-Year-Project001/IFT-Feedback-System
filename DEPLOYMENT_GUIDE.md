@@ -422,9 +422,26 @@ to work, add these as well:
 ```
 SMTP_HOST="smtp.gmail.com"
 SMTP_PORT="587"
-SMTP_USER="your-address@gmail.com"
+SMTP_USERNAME="your-address@gmail.com"
 SMTP_PASSWORD="your new 16-character app password"
 ```
+
+**Check the spelling of that third line.** It must be `SMTP_USERNAME`.
+
+An earlier version of this guide said `SMTP_USER`, which the app does not read.
+The key was accepted by the secrets box, stored, and then ignored — so the app
+carried on saying *"Email delivery is not configured on this deployment"* no
+matter what you typed. If you already added `SMTP_USER`, either rename it to
+`SMTP_USERNAME` or simply leave it: the app now accepts either spelling.
+
+Check it worked by opening the app, choosing **Try a Different Email** on the
+password-recovery screen, and entering a real registered address. You should get
+*"A password reset code has been sent to …"*. If the warning about email not
+being configured is still there, the key name or the app password is wrong.
+
+If emails are sent but never arrive, the cause is almost always the network
+rather than the password. `SMTP_PORT="465"` uses implicit TLS instead of
+STARTTLS and is worth trying if 587 is blocked.
 
 ## 8.5 — Restart the app
 
@@ -432,6 +449,16 @@ SMTP_PASSWORD="your new 16-character app password"
 2. Click **Redeploy**.
 
 Your app now reads the database address from the secrets box.
+
+To confirm email works once the app has restarted, run this on your own machine
+with the same values in `.streamlit/secrets.toml`:
+
+```
+.venv\Scripts\python.exe verify_email.py your-address@gmail.com
+```
+
+It tests the connection, the credentials and a real delivery, and tells you which
+of the three to fix.
 
 ---
 

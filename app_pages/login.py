@@ -22,7 +22,13 @@ import db
 import st_compat
 from auth import authenticate, authenticate_by_email, validate_registration, check_lockout, register_failed_attempt, clear_attempts
 from config import CATEGORIES, OTP_EXPIRY_MINUTES
-from email_service import is_email_configured, send_registration_email, send_otp_email, send_password_changed_email
+from email_service import (
+    is_email_configured,
+    send_registration_email,
+    send_otp_email,
+    send_password_changed_email,
+    show_otp_on_screen,
+)
 from icons import i
 from components import esc, html_alert, park_result_dialog
 
@@ -523,7 +529,7 @@ def _show_forgot_request():
                                     f"A password reset code has been sent to {user_email}. "
                                     "Please check your inbox and proceed."
                                 )
-                            else:
+                            elif show_otp_on_screen():
                                 st.session_state["otp_result_kind"] = "warning"
                                 st.session_state["otp_result_message"] = (
                                     f"The reset email could not be delivered ({msg}). "
@@ -531,7 +537,19 @@ def _show_forgot_request():
                                     "as it will not be shown again."
                                 )
                                 st.session_state["otp_fallback_code"] = otp
-                        else:
+                            else:
+                                # No on-screen code. Showing it here would hand a
+                                # password reset to anyone who can merely submit
+                                # this form — see show_otp_on_screen().
+                                st.session_state["otp_result_kind"] = "error"
+                                st.session_state["otp_result_message"] = (
+                                    f"The reset email could not be delivered ({msg}). "
+                                    "For your security the code is not shown on screen. "
+                                    "Please try again shortly, or contact the IFT "
+                                    "Department to have your password reset."
+                                )
+                                st.session_state["otp_fallback_code"] = None
+                        elif show_otp_on_screen():
                             st.session_state["otp_result_kind"] = "warning"
                             st.session_state["otp_result_message"] = (
                                 "Email delivery is not configured on this deployment. "
@@ -539,6 +557,17 @@ def _show_forgot_request():
                                 "do not rely on this behaviour in a production environment."
                             )
                             st.session_state["otp_fallback_code"] = otp
+                        else:
+                            # Fail closed rather than print the key to the account.
+                            st.session_state["otp_result_kind"] = "error"
+                            st.session_state["otp_result_message"] = (
+                                "Email delivery is not available on this deployment, so "
+                                "password recovery cannot be completed here. For your "
+                                "security the reset code is never shown on screen. "
+                                "Please contact the IFT Department to have your "
+                                "password reset."
+                            )
+                            st.session_state["otp_fallback_code"] = None
                         st.rerun()
 
         if st_compat.button("← Return to Sign In", use_container_width=True):

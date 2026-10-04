@@ -42,17 +42,71 @@ def _esc(text) -> str:
     return html.escape(str(text)) if text is not None else ""
 
 
+# Alternative spellings accepted for the same setting.
+#
+# `SMTP_USER` is what DEPLOYMENT_GUIDE.md § 8.4 instructed people to create,
+# while this module only ever read `SMTP_USERNAME`. Nothing warned about it: the
+# key was accepted by Streamlit's secrets box, stored happily, and then ignored —
+# so the app reported "Email delivery is not configured on this deployment"
+# forever, no matter how carefully the instructions had been followed. The
+# canonical name is tried first.
+#
+# Accepting both means a secret already entered under the documented name starts
+# working on the next deploy, instead of requiring everyone to go and retype it.
+_SETTING_ALIASES = {
+    "SMTP_USERNAME": ("SMTP_USERNAME", "SMTP_USER"),
+}
+
+
 def _setting(key: str) -> str | None:
-    try:
-        if key in st.secrets:
-            return st.secrets[key]
-    except Exception:
-        pass
-    return os.environ.get(key)
+    """First non-empty value among `key` and any accepted alias of it.
+
+    Secrets are still consulted before the environment. Each candidate is skipped
+    when present but blank, so an empty placeholder cannot shadow a real value
+    further down the list — the previous version returned the blank and stopped.
+    """
+    for name in _SETTING_ALIASES.get(key, (key,)):
+        try:
+            if name in st.secrets:
+                value = st.secrets[name]
+                if value is not None and str(value).strip():
+                    return value
+        except Exception:
+            pass
+        value = os.environ.get(name)
+        if value is not None and str(value).strip():
+            return value
+    return None
 
 
 def is_email_configured() -> bool:
     return bool(_setting("SMTP_HOST") and _setting("SMTP_USERNAME") and _setting("SMTP_PASSWORD"))
+
+
+def show_otp_on_screen() -> bool:
+    """Whether the one-time reset code may ever be displayed in the page.
+
+    Off unless explicitly switched on, and that default is the whole point.
+
+    The code is the only thing standing between "know someone's email address"
+    and "reset their password". When it is shown on screen, verification becomes
+    meaningless: an attacker types the victim's address, reads the code off their
+    own screen, and sets a new password. That is not a degraded experience, it
+    is unrestricted account takeover — including of administrator accounts.
+
+    So this fails CLOSED. If the deployment cannot deliver mail, password
+    recovery is unavailable rather than insecure, and the page says so and
+    points at the department instead.
+
+    Turn it on deliberately (a secret or env var, `SHOW_OTP_ON_SCREEN`) only to
+    demo the flow on a throwaway database with fake accounts. Never on the real
+    one — and note it stays on even after SMTP starts working, because the
+    fallback is also reached when a send *fails*, which is precisely when an
+    attacker would be hoping to trigger it.
+    """
+    raw = _setting("SHOW_OTP_ON_SCREEN")
+    return str(raw if raw is not None else "").strip().lower() in (
+        "1", "true", "yes", "on")
 
 
 def _send(to_email: str, subject: str, html_body: str, text_body: str) -> tuple[bool, str]:
