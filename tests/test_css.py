@@ -99,8 +99,12 @@ used_variants = set(re.findall(r'data-variant="([^"]+)"', stripped))
 # The app's OWN test-ids (from key=) are not in the bundle; they are fine.
 app_testids = set()
 for dirpath, dirnames, filenames in os.walk(ROOT):
+    # ".kilo" holds agent worktrees: a full but STALE copy of this same app
+    # living inside the repository. Scanning it reported the removed login
+    # badges as unstyled classes, because the copy predates their removal.
     dirnames[:] = [d for d in dirnames
-                   if d not in ("tests", ".venv", "__pycache__", "backup", "model", ".git")]
+                   if d not in ("tests", ".venv", "__pycache__", "backup",
+                                "model", ".git", ".kilo")]
     for fn in filenames:
         if fn.endswith(".py") and not fn.startswith("_"):
             try:
@@ -573,7 +577,7 @@ CSS_EXEMPT_CLASSES: dict[str, str] = {}
 # version of this check reported as an unstyled class on the first run.
 CLASS_ATTR = re.compile(r"(?<![\w-])class\s*=\s*[\"']([a-zA-Z][a-zA-Z0-9 _-]*)[\"']")
 
-SKIP_DIRS = {".venv", "__pycache__", "backup", ".git", "model", "tests"}
+SKIP_DIRS = {".venv", "__pycache__", "backup", ".git", "model", "tests", ".kilo"}
 used: dict[str, list[str]] = {}
 for path in sorted(Path(ROOT).rglob("*.py")):
     rel = path.relative_to(ROOT).as_posix()

@@ -1444,55 +1444,21 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     color: #ffffff !important;
 }
 
-/* ── LOGIN — shared branding ── */
-.login-institution-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: .5rem;
-    background: linear-gradient(135deg, rgba(30,58,138,0.06), rgba(37,99,235,0.08));
-    border: 1px solid rgba(37,99,235,0.22);
-    border-radius: 8px;
-    padding: 0.35rem 0.8rem;
-    font-size: 0.73rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    color: #1e3a8a;
-    margin-bottom: 0.75rem;
-    box-shadow: 0 1px 4px rgba(37,99,235,0.05);
-}
-.institution-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #2563eb;
-    box-shadow: 0 0 6px rgba(37,99,235,0.5);
-    flex-shrink: 0;
-}
-.login-branding-badge {
-    display: inline-flex; align-items: center; gap: .55rem;
-    background: rgba(37,99,235,.07); border: 1px solid rgba(37,99,235,.2);
-    border-radius: 999px; padding: .4rem 1.1rem;
-    font-size: .72rem; font-weight: 700; letter-spacing: .1em;
-    text-transform: uppercase; color: #2563eb; margin-bottom: 0;
-    box-shadow: 0 2px 8px rgba(37,99,235,.08);
-}
-.login-session-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: .45rem;
-    background: linear-gradient(135deg, rgba(124,58,237,0.08), rgba(139,92,246,0.12));
-    border: 1px solid rgba(124,58,237,0.25);
-    border-radius: 999px;
-    padding: .4rem 1rem;
-    font-size: .72rem;
-    font-weight: 600;
-    color: #6d28d9;
-    box-shadow: 0 2px 8px rgba(124,58,237,0.08);
-}
-.login-session-pill strong {
-    color: #4c1d95;
-    font-weight: 800;
-}
+/* ── LOGIN — hero ──
+
+   The institution line ("Federal University of Technology, Owerri · Dept. of
+   Information Technology"), the "Live Feedback Platform" badge and the
+   academic-session pill that used to sit above the wordmark are gone, along
+   with their rules.
+
+   They were not decoration. Three stacked pills pushed the title down by roughly
+   a third of the viewport, which is what left a phone user scrolling past the
+   whole hero to reach the login form. The department name is not lost — the
+   login footer still carries it in full.
+
+   `.pulse-dot` stays. It is defined here but rendered by app.py rather than the
+   login page, so removing it along with the badge that used to own it would
+   have quietly unstyled a live status indicator somewhere else. */
 .pulse-dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: #10b981;
@@ -1533,6 +1499,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     100% { background-position: 100% 50%; }
 }
 .login-subtitle { font-size: .95rem; color: #475569; line-height: 1.75; max-width: 460px; margin-top: 1rem; margin-bottom: 2rem; }
+/* "Scroll down to access the login form."
+
+   Hidden by default, revealed only by the phone breakpoint. On desktop the login
+   form sits in the column beside this one, so there is nothing to scroll to and
+   the instruction would simply be wrong. `display: none` rather than a muted
+   style, so it cannot take up space it was never meant to use. */
+.login-scroll-hint { display: none; }
+@keyframes scrollHintBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(3px); }
+}
 .login-feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-bottom: 1.6rem; }
 .login-feature-card {
     background: #ffffff; border: 1px solid var(--navy-border2);
@@ -2001,10 +1978,29 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     }
 
     /* ── Login page ── */
-    .login-branding-badge {
-        font-size: var(--fs-2xs) !important;
-        padding: 0.3rem 0.8rem !important;
-        margin-bottom: 1rem !important;
+
+    /* The two columns stack on a phone, so the login form ends up below this
+       entire column — hero, subtitle, feature cards and stats. That is correct
+       behaviour, but it left a phone user on what looked like a landing page
+       with no way in, so the instruction is shown here and only here. */
+    .login-scroll-hint {
+        display: flex !important;
+        align-items: center;
+        gap: 0.45rem;
+        max-width: 100%;
+        margin: -1rem 0 1.4rem;
+        padding: 0.55rem 0.85rem;
+        border: 1px dashed rgba(37, 99, 235, 0.35);
+        border-radius: 10px;
+        background: rgba(37, 99, 235, 0.05);
+        color: #1d4ed8;
+        font-size: var(--fs-2xs);
+        font-weight: 700;
+        line-height: 1.3;
+    }
+    .login-scroll-hint .lc-ico {
+        flex-shrink: 0;
+        animation: scrollHintBounce 1.8s var(--ease-standard) infinite;
     }
     .login-hero {
         flex-direction: column !important;
@@ -3092,6 +3088,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     .page-header h1,
     .login-title-gradient,
     .pulse-dot,
+    .login-scroll-hint .lc-ico,
     .engine-indicator-dot {
         animation: none !important;
     }

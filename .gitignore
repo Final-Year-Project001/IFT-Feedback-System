@@ -35,6 +35,12 @@ tests/__pycache__/
 *.bak
 tests/_last_run.txt
 
+# Editor/agent worktrees. These hold a full but STALE copy of this same app
+# inside the repository, which is not something to deploy: it would ship a
+# second, out-of-date copy of every module, and the suites that walk the tree
+# would report findings in a file that never runs.
+.kilo/
+
 # One-shot local dev artefacts: run-all transcripts and the Streamlit boot log.
 _streamlit.log
 _streamlit_*.log

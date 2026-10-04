@@ -21,7 +21,8 @@ ROOT = str(Path(__file__).resolve().parent.parent)
 FILES = []
 for dirpath, dirnames, filenames in os.walk(ROOT):
     dirnames[:] = [d for d in dirnames
-                   if d not in ("tests", ".venv", "__pycache__", ".git", "backup", "model", ".streamlit")]
+                   if d not in ("tests", ".venv", "__pycache__", ".git", "backup",
+                                "model", ".streamlit", ".kilo")]
     for fn in sorted(filenames):
         if fn.endswith(".py") and not fn.startswith("_"):
             FILES.append(os.path.join(dirpath, fn))

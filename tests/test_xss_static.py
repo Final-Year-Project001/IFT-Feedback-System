@@ -433,7 +433,7 @@ def _build_allowlist_index():
 SAFE_NAME_RES = _build_allowlist_index()
 
 SKIP = {"tests", "__pycache__", ".venv", "backup", "model", ".git", ".streamlit",
-        "nltk_data"}
+        "nltk_data", ".kilo"}
 
 # Modules that build markup for a browser without ever calling
 # `st.markdown(..., unsafe_allow_html=True)` themselves. They are still

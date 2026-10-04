@@ -191,7 +191,6 @@ def _do_login_by_email(email, password):
 
 def _show_student_signin():
     left_col, right_col = st.columns([1.2, 0.8], gap="large")
-    active_session = db.get_active_session()
 
     # A message parked by another view (e.g. "Account created successfully")
     # survives the st.rerun() that the redirect performs, which a direct
@@ -203,21 +202,6 @@ def _show_student_signin():
     with left_col:
         st.markdown('<div style="padding:1rem 0.5rem;">', unsafe_allow_html=True)
         st.markdown(
-            '<div class="login-institution-badge">'
-            '<span class="institution-dot"></span> '
-            'Federal University of Technology, Owerri &nbsp;·&nbsp; Dept. of Information Technology'
-            '</div>'
-            '<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:1.4rem;flex-wrap:wrap;">'
-            '<div class="login-branding-badge">'
-            '<span class="pulse-dot"></span> Live Feedback Platform'
-            '</div>'
-            f'<div class="login-session-pill">'
-            f'{i("calendar", 12, "#7c3aed")} Academic Session: <strong>{esc(active_session)}</strong>'
-            '</div>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
             '<div class="login-hero">'
             f'<div class="login-logo">{i("graduation-cap", 36, "#ffffff")}</div>'
             '<h1 class="login-title">'
@@ -227,9 +211,17 @@ def _show_student_signin():
             '</div>',
             unsafe_allow_html=True,
         )
+        # The scroll hint rides along with the subtitle because that is the last
+        # thing on screen before the feature grid. It is `display: none` on
+        # desktop — where the login form sits beside this column and there is
+        # nothing to scroll to — and only revealed by the phone breakpoint.
         st.markdown(
             '<p class="login-subtitle">Empowering FUTO IFT students with intelligent, transparent feedback channels. '
-            'Submissions are analyzed in real time by domain-specialized AI to drive actionable departmental improvements.</p>',
+            'Submissions are analyzed in real time by domain-specialized AI to drive actionable departmental improvements.</p>'
+            '<div class="login-scroll-hint">'
+            f'{i("chevron-down", 16, "#2563eb")}'
+            '<span>Scroll down to access the login form</span>'
+            '</div>',
             unsafe_allow_html=True,
         )
         feature_cards = "".join(

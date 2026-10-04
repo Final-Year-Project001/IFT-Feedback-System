@@ -55,7 +55,8 @@ def read(name):
 CODE = []
 for dirpath, dirnames, filenames in os.walk(ROOT):
     dirnames[:] = [d for d in dirnames if d not in
-                   ("tests", ".venv", "__pycache__", "backup", "model", ".git", ".streamlit")]
+                   ("tests", ".venv", "__pycache__", "backup", "model", ".git",
+                    ".streamlit", ".kilo")]
     for fn in sorted(filenames):
         if fn.endswith(".py") and not fn.startswith("_"):
             CODE.append((os.path.relpath(os.path.join(dirpath, fn), ROOT),

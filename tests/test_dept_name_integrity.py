@@ -33,7 +33,7 @@ def section(title: str) -> None:
 
 
 SUFFIXES = {".py", ".md", ".txt", ".toml", ".css", ".example"}
-SKIP_DIRS = {".venv", "__pycache__", "backup", ".git", "model"}
+SKIP_DIRS = {".venv", "__pycache__", "backup", ".git", "model", ".kilo"}
 
 # Where "IFT" legitimately is the department name or a course code.
 GENUINE = re.compile(

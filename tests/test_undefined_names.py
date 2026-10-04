@@ -133,9 +133,13 @@ def main():
         # "tests" is skipped on purpose: these scripts are not the app, and
         # test_undefined_names_selftest.py deliberately contains undefined
         # names as fixtures. Scanning them would report the fixtures as bugs.
+        #
+        # ".kilo" holds agent worktrees -- a stale duplicate of this same app
+        # inside the repo. Every finding in a copy is a finding in a file that
+        # does not ship, so it is skipped alongside .venv.
         dirnames[:] = [d for d in dirnames
                        if d not in ("tests", ".venv", "__pycache__", "backup",
-                                    "model", ".git", ".streamlit")]
+                                    "model", ".git", ".streamlit", ".kilo")]
         for fn in sorted(filenames):
             if not fn.endswith(".py") or fn.startswith("_"):
                 continue
