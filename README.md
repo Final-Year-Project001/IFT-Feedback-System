@@ -1,14 +1,27 @@
 # FUTO IFT Smart Feedback System
 
 A role-aware, sentiment-powered feedback platform for the FUTO Department
-of Information Technology, built with Streamlit, SQLite, Pandas, Plotly,
-scikit-learn and smtplib.
+of Information Technology, built with Streamlit, SQLite **or PostgreSQL**,
+Pandas, Plotly, scikit-learn and smtplib.
 
 **New here?** Start with **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** — a full
 step-by-step walkthrough from installing Python to deploying the app,
 written for copy-paste-along development. It covers account
 registration, setting up email, and training the sentiment model in
 detail — this README is just the map.
+
+**Looking for how it actually works?** Read
+**[docs/SYSTEM_ARCHITECTURE.md](./docs/SYSTEM_ARCHITECTURE.md)** — the full
+technical reference: architecture and sequence diagrams, the complete database
+schema, every key flow (sign-in, delete/restore, sessions, email, sentiment),
+the security model, the retention rules, and a changelog of what changed and why.
+
+> **The database is PostgreSQL in production.** Streamlit Community Cloud's disk
+> is wiped on redeploy, so the SQLite file cannot be relied on there. The same
+> codebase runs on either — SQLite stays the default everywhere else, so no
+> local workflow changes. See
+> [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) to deploy, or §5 of the
+> architecture document for how the translation layer works.
 
 ## Quick start
 
@@ -62,11 +75,15 @@ deployment**, from *User Management* in the app; see below).
 ## Project structure
 
 ```
-app.py                  entry point — routing, sidebar, CSS injection
+app.py                  entry point — routing, sidebar, CSS injection,
+                         session token + auth gate, the web_sessions table
 config.py                categories, checklist options, accounts, session, sentiment/email settings
 auth.py                  login/registration validation + session-based lockout
-db.py                    SQLite: users, password_resets, feedback, admin_notes,
-                         academic_sessions, admin_audit_log + the guarded deletion engine
+db.py                    persistence — users, password_resets, feedback, admin_notes,
+                         academic_sessions, admin_audit_log, admin_deletion_tombstones
+                         + the guarded deletion/restore engine
+db_backend.py            PostgreSQL translation layer + connection recovery
+                         (completely inert unless FUTO_POSTGRES_URL is set)
 sentiment.py             domain-lexicon rule engine (VADER Academic Pro) + optional trained classifier
 train_model.py           trains a classifier on admin-corrected labels
 download_nltk_data.py    one-time script: downloads the NLTK corpora
@@ -76,7 +93,9 @@ components.py            shared HTML widgets (cards, alerts, headers) + esc() + 
 icons.py                 Lucide icon helper (inline SVG, no CDN) + sentiment icon/color mapping
 st_compat.py             Streamlit version shim — every call site goes through it
 styles.py                all CSS — light theme
+storage.py               optional external backup (no-op unless configured)
 .streamlit/secrets.toml.example   copy to secrets.toml and fill in SMTP details
+docs/SYSTEM_ARCHITECTURE.md      full technical reference + diagrams
 app_pages/                   one file per screen (login, home, feedback_form,
                            my_stats, admin_overview, full_dashboard,
                            decision_insights, user_management)
@@ -96,15 +115,30 @@ tests/                       verification suite — run it with run_all.py
   and can permanently delete an account *and all of that student's
   feedback* — behind a two-stage confirmation that requires typing the
   exact username (plus `DELETE ADMIN` for admin accounts). Deletion is
-  server-side guarded: you cannot delete yourself, and you cannot delete
-  the last remaining admin. Every action is written to an audit log with
+  server-side guarded: you cannot delete yourself, you cannot delete
+  the last remaining admin, and you cannot delete any admin account.
+  Every action is written to an audit log with
   a full JSON snapshot of the deleted rows, so a mistaken deletion can be
   undone from the same page — for **5 days**. After that the entry is
   permanently removed (the account's details, its password hash and the full
   text of its feedback comments), so the deletion becomes irreversible and
-  leaves no record behind. The panel shows only the last 5 days, by design:
-  it is a record of current accountability, not a growing archive. Copy the
+  leaves no record behind. The panel lists only deletions that are **still
+  awaiting restoration**, each with a countdown of the days it has left; a
+  restored deletion leaves the panel immediately rather than lingering as
+  unfinished work, and a confirmation that clears itself after ten seconds
+  reports what happened. Copy the
 > page or the database first if you need the history to outlive the window.
+- **Administrator-managed academic sessions.** Create a session, promote one to
+  be the active default, or delete one — from *Full Dashboard → Academic
+  Sessions Management*. The active default supplies the `session` column's
+  default for new submissions. Deleting one is refused for the active default
+  and for the last remaining session, and it never deletes that session's
+  feedback: the rows stay and remain visible under *All Sessions (Aggregate)*,
+  they simply stop being offered as a filter. Every deletion is audited.
+- **Sessions that survive a refresh.** Signing in stores the session in a
+  `web_sessions` row keyed by a token carried in the URL, so reloading or
+  reopening the tab keeps you signed in for up to seven days of inactivity
+  (the window slides on every load). Deleting an account revokes it at once.
 - **A deterministic, domain-tuned sentiment engine.** A 220+ term
   academic lexicon with multi-word-expression rewriting, a negation-aware
   pre-pass, intensifier boosting and contrastive-clause weighting. No
@@ -135,8 +169,7 @@ tests/                       verification suite — run it with run_all.py
 - **Academic session scoping.** Every submission carries a session, and
   the sidebar selector decides which one the app is looking at. The
   active default is managed in the app under *Full Dashboard → Academic
-  Sessions Management*, not by editing a constant.
-- **Admin action notes** on Decision Insights — a persisted,
+  Sessions Management*, not by editing a constant.- **Admin action notes** on Decision Insights — a persisted,
   attributable note per category, closing the "feedback → visible
   action" loop.
 - **CSV export** on the admin Full Dashboard.
@@ -234,13 +267,19 @@ for a widget that does not exist is caught before deploy.
   not cascade automatically. The app deletes the children explicitly in
   a single transaction and reconciles orphans on startup — but if you
   write your own SQL against this schema, you own the cascade too.
-- Streamlit Community Cloud's filesystem isn't persistent across
-  redeploys. Because `futo_feedback.db` is gitignored, a redeploy starts
-  from an empty database and re-seeds `admin001` / `password123` —
-  every student's feedback is gone. Fine for a demo or a defense, but a
-  real production rollout wants a server with persistent storage for the
-  SQLite file (or a migration to a hosted database).
-- The trained classifier is lost on redeploy for the same reason:
+- **A deleted username is retained forever** in `admin_deletion_tombstones`,
+  which is what stops `seed_admins` recreating a deleted seeded admin with
+  its default password. The tombstone has no expiry, and for an ordinary
+  student it is never actually consulted — only the seeded admin names are —
+  so it is a permanent record of a username whose other data is gone after
+  5 days. Restricting tombstones to seeded admin accounts only is a small
+  change if that trade-off is not wanted.
+- **Streamlit Community Cloud's filesystem isn't persistent across
+  redeploys**, so the SQLite file cannot be used there. This is why the
+  production deployment sets the `FUTO_POSTGRES_URL` secret and runs on
+  PostgreSQL — see `DEPLOYMENT_GUIDE.md`. On SQLite, a redeploy still starts
+  from an empty database and re-seeds `admin001` / `password123`.
+- The trained classifier is lost on redeploy:
   `model/sentiment_classifier.pkl` is gitignored and is derived from
   corrections that live in the database. It is **not** needed for the app
   to function — the rule engine always produces the score — and an
@@ -249,4 +288,15 @@ for a widget that does not exist is caught before deploy.
 - Back up with `sqlite3 futo_feedback.db ".backup backup/<name>.db"`, not
   by copying the raw file: the database runs in WAL mode, and copying
   only `futo_feedback.db` can silently miss committed transactions still
-  held in `futo_feedback.db-wal`.
+  held in `futo_feedback.db-wal`. On a PostgreSQL deployment use `pg_dump`
+  instead.
+
+---
+
+## Need the detail?
+
+**[docs/SYSTEM_ARCHITECTURE.md](./docs/SYSTEM_ARCHITECTURE.md)** covers the
+architecture and sequence diagrams, the full database schema (all 8 tables,
+all 4 indexes, and which relationships are enforced and which are only
+conventional), the dual-backend translation layer, every key flow, the security
+model, the retention rules, and a changelog of what changed and why.

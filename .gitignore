@@ -44,3 +44,14 @@ tests/_last_run.txt
 # One-shot local dev artefacts: run-all transcripts and the Streamlit boot log.
 _streamlit.log
 _streamlit_*.log
+
+# Documentation is authored and built on this machine only. The PDF and its
+# source are not part of the repository: they are a deliverable, not application
+# code, and a ~1 MB binary in every clone is not worth carrying. Both are
+# regenerated with `python build_documentation.py`.
+FUTO_IFT_Smart_Feedback_System_Documentation.pdf
+docs/
+build_documentation.py
+verify_pdf_layout.py
+verify_pdf_contents.py
+futo_doc_build/
