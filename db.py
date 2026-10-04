@@ -1311,16 +1311,26 @@ def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
         # Password-reset tokens are deliberately NOT restored: they were
         # either consumed or expired at deletion time, and re-arming a
         # one-time code is a security hazard with no upside.
-
-        conn.execute(
-            """INSERT INTO users (username, email, full_name, password_hash, role, level, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (
-                u_name, u_data["email"], u_data["full_name"],
-                u_data["password_hash"], u_data["role"], u_data.get("level"),
-                u_data.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
-        )
+        #
+        # ORDER MATTERS, and it is the opposite of what it looks like it should
+        # be. The feedback rows go in FIRST and the account LAST.
+        #
+        # This used to insert the account, then loop over the feedback, and it
+        # reported success while creating no account at all. The reason is
+        # PostgreSQL: a failed statement aborts the whole transaction, and
+        # `db_backend` rolls that transaction back before re-raising so the
+        # connection stays usable. So a single bad feedback row — one whose
+        # value the column will not accept — silently discarded the
+        # uncommitted `users` INSERT along with it. The loop caught the error,
+        # counted the row as "skipped", and the function went on to commit the
+        # audit entry and report a restore that had not happened. Clicking
+        # Restore again just repeated it, which is how one deletion ended up
+        # with three identical "Restored" entries and no account.
+        #
+        # There are no foreign keys in this schema, so nothing requires the user
+        # row to exist before its feedback — the order is free to be chosen for
+        # safety. The account now goes in after every fallible statement, so
+        # nothing that follows can undo it.
 
         fb_restored = 0
         fb_skipped = 0
@@ -1365,6 +1375,37 @@ def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
             except Exception:
                 fb_skipped += 1
 
+        # `fb_restored` counted driver-reported rowcounts, which is not the same
+        # thing as what is in the table: a rollback triggered by a failed
+        # statement can discard rows this loop had already "successfully"
+        # inserted, and the tally never noticed. The count is therefore read
+        # back from the database, so the number reported to the administrator is
+        # the number of rows that actually survived.
+        try:
+            _now_present = conn.execute(
+                "SELECT COUNT(*) FROM feedback WHERE LOWER(username) = LOWER(?)",
+                (u_name,),
+            ).fetchone()[0]
+            fb_restored = int(_now_present)
+            fb_skipped = max(0, len(fb_list) - fb_restored)
+        except Exception:
+            # Leave the driver's own tally in place rather than report a number
+            # this function cannot stand behind.
+            pass
+
+        # The account goes in only now — after every fallible feedback statement
+        # (see the note above). Nothing below this point can fail in a way that
+        # discards it.
+        conn.execute(
+            """INSERT INTO users (username, email, full_name, password_hash, role, level, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                u_name, u_data["email"], u_data["full_name"],
+                u_data["password_hash"], u_data["role"], u_data.get("level"),
+                u_data.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
             """INSERT INTO admin_audit_log (
@@ -1399,11 +1440,34 @@ def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
         # actually succeeded.
         _set_deletion_tombstone(u_name, present=False)
 
+        # PROOF, not optimism. The account is read back from the database before
+        # success is reported. Every earlier version of this function returned
+        # whatever the code path believed had happened, which is how it managed
+        # to say "restored" while creating nothing at all — and an administrator
+        # reading that message had no way to tell. A restore that cannot be seen
+        # in the users table is reported as a failure, whatever the intent was.
+        try:
+            _survived = username_exists(u_name)
+        except Exception:
+            # Cannot verify. Say so rather than claim a success nobody checked.
+            return True, (
+                f"The account '{u_name}' was written and the restore was committed, "
+                "but the database could not be re-read to confirm it, so please "
+                "check the account directory before assuming it is back."
+            )
+        if not _survived:
+            return False, (
+                f"The restore did not take: '{u_name}' is still not in the account "
+                "directory. Nothing was left half-restored, and this deletion can "
+                "be restored again — please report this, as it means a value in "
+                "the saved snapshot was rejected by the database."
+            )
+
         msg = f"The account '{u_name}' and {fb_restored} feedback record(s) were restored."
         if fb_skipped:
             msg += (
-                f" {fb_skipped} record(s) were skipped because a matching "
-                "(category, session) submission already exists."
+                f" {fb_skipped} record(s) could not be restored, most likely "
+                "because a matching (category, session) submission now exists."
             )
         msg += " Any password-reset codes issued to this account were not restored — the user must request a new one."
         return True, msg
