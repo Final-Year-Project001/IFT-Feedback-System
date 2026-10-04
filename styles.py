@@ -347,6 +347,40 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     padding-left: .2rem;
 }
 
+/* Administrator-only deployment health (admin sidebar).
+
+   Both colours clear 4.5:1 against the sidebar AND against their own tint, which
+   was measured rather than eyeballed: --green-text is 5.5:1 on white and 5.0:1 on
+   its .07 tint; #b91c1c is 6.5:1 on white and 5.7:1 on its .08 tint. The <code>
+   chip inherits the parent's colour, so it lands on the same 5.7:1. */
+.health-ok,
+.health-bad {
+    font-size: var(--fs-2xs);
+    line-height: 1.5;
+    padding: .45rem .55rem;
+    border-radius: var(--radius-sm);
+    margin-top: .25rem;
+}
+.health-ok {
+    background: rgba(4, 120, 87, 0.07);
+    border: 1px solid rgba(4, 120, 87, 0.22);
+    color: #047857;
+    font-weight: 600;
+}
+.health-bad {
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid rgba(220, 38, 38, 0.25);
+    color: #b91c1c;
+    font-weight: 600;
+}
+.health-bad code {
+    background: rgba(220, 38, 38, 0.10);
+    border-radius: 4px;
+    padding: 0 .25rem;
+    color: inherit;
+    font-size: inherit;
+}
+
 .sidebar-engine-badge {
     margin-top: 0.9rem;
     padding: 0.75rem 0.95rem;

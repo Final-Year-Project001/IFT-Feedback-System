@@ -28,6 +28,7 @@ from email_service import (
     send_otp_email,
     send_password_changed_email,
     show_otp_on_screen,
+    email_status_report,
 )
 from icons import i
 from components import esc, html_alert, park_result_dialog
@@ -568,6 +569,12 @@ def _show_forgot_request():
                                 "password reset."
                             )
                             st.session_state["otp_fallback_code"] = None
+                            # The sentence a student sees must not name a missing
+                            # secret — that would tell anyone probing the login
+                            # page how the deployment is configured. The precise
+                            # answer goes to the app's own log instead, which is
+                            # where whoever has to fix this will actually look.
+                            print("[email] " + email_status_report(), flush=True)
                         st.rerun()
 
         if st_compat.button("← Return to Sign In", use_container_width=True):

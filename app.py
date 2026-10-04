@@ -396,6 +396,44 @@ def _sidebar(user):
 
         st.markdown("---")
 
+        # ── Administrator-only deployment health ──
+        # An unconfigured mail server is invisible until a student tries to
+        # recover a password, which is the worst possible moment to discover it.
+        # An administrator should see it in one glance and be told WHICH setting
+        # is absent, not merely that a feature is "unavailable".
+        #
+        # The database backend is shown alongside it because a deployment running
+        # on the local SQLite file looks identical to a correct one until it is
+        # restarted and the data is gone — the two failure modes worth catching
+        # early are the two that are invisible until they are expensive.
+        if user["role"] == "admin":
+            from email_service import email_status
+
+            _mail = email_status()
+            _backend = "PostgreSQL" if db.active_backend() == "postgresql" else "SQLite (local file)"
+            # Interpolated through esc() at the point of use. The static XSS gate
+            # audits variable *names*, so it cannot see that this particular value
+            # was escaped three lines above its assignment -- it only knows the
+            # name, and the name is not on its whitelist. Escaping here instead
+            # is the honest fix: the gate exists so that "it is only ever one of
+            # two constants" cannot become the reasoning that lets the next,
+            # genuinely user-influenced value through unescaped.
+            if _mail["configured"]:
+                st.markdown(
+                    f'<div class="sidebar-label">{i("check-circle", 12)} Deployment</div>'
+                    f'<div class="health-ok">Database: {esc(_backend)}<br>Email: configured</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div class="sidebar-label">{i("alert-triangle", 12)} Deployment</div>'
+                    f'<div class="health-ok">Database: {esc(_backend)}</div>'
+                    f'<div class="health-bad">Email: not configured &mdash; password '
+                    f'recovery is unavailable.<br>Missing: '
+                    f'<code>{esc(", ".join(_mail["missing"]))}</code></div>',
+                    unsafe_allow_html=True,
+                )
+
         nav = ADMIN_NAV if user["role"] == "admin" else STUDENT_NAV
         label = "Analytics Dashboard" if user["role"] == "admin" else "Navigation"
         st.markdown(f'<div class="sidebar-label">{label}</div>', unsafe_allow_html=True)

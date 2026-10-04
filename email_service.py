@@ -83,6 +83,70 @@ def is_email_configured() -> bool:
     return bool(_setting("SMTP_HOST") and _setting("SMTP_USERNAME") and _setting("SMTP_PASSWORD"))
 
 
+# What a correct deployment must define, in the order the report reads best.
+REQUIRED_SETTINGS = ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD")
+OPTIONAL_SETTINGS = ("SMTP_PORT", "SMTP_FROM_EMAIL")
+
+
+def email_status() -> dict:
+    """Which settings are present, which are missing, and where each came from.
+
+    Names only — never a value, and never even the length of one. This is built
+    to be shown to an administrator on a screen that may be shared or
+    photographed, so there is nothing here worth stealing: only whether each key
+    resolved, and whether from Streamlit's secrets box or the process environment.
+
+    It exists because the previous failure mode was pure guesswork. A wrong or
+    absent key produced one identical sentence — "email delivery is not
+    configured" — on a public login page, telling whoever had to fix it nothing
+    at all. Hours went into re-checking the SMTP host before it emerged that the
+    deployment guide itself named the username key `SMTP_USER` while the code read
+    `SMTP_USERNAME`. A report that names the missing key ends that immediately.
+    """
+    present, missing, sources = [], [], {}
+    for key in REQUIRED_SETTINGS:
+        if not _setting(key):
+            missing.append(key)
+            continue
+        present.append(key)
+        for candidate in _SETTING_ALIASES.get(key, (key,)):
+            try:
+                if candidate in st.secrets and st.secrets[candidate]:
+                    sources[key] = f"secrets ({candidate})"
+                    break
+            except Exception:
+                pass
+            if os.environ.get(candidate):
+                sources[key] = f"environment ({candidate})"
+                break
+        else:
+            sources[key] = "resolved"
+    return {
+        "configured": not missing,
+        "present": present,
+        "missing": missing,
+        "optional_missing": [k for k in OPTIONAL_SETTINGS if not _setting(k)],
+        "sources": sources,
+    }
+
+
+def email_status_report() -> str:
+    """A one-paragraph, log-safe summary of `email_status()`."""
+    status = email_status()
+    found = "; ".join(f"{k} from {v}" for k, v in status["sources"].items())
+    if status["configured"]:
+        extra = ("; optional not set: " + ", ".join(status["optional_missing"])
+                 if status["optional_missing"] else "")
+        return f"Email configured. {found}{extra}"
+    return (
+        "Email NOT configured. Missing required setting(s): "
+        + ", ".join(status["missing"])
+        + ". Already found: "
+        + (found or "nothing")
+        + ". Add the missing key(s) under Settings -> Secrets, then restart the app."
+    )
+
+
 def show_otp_on_screen() -> bool:
     """Whether the one-time reset code may ever be displayed in the page.
 
