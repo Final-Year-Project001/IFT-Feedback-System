@@ -1186,8 +1186,18 @@ def audit_days_remaining(performed_at: str) -> int:
         # direction to be wrong in: it cannot talk someone out of restoring while
         # there is still time to do it.
         return AUDIT_RETENTION_DAYS
-    elapsed = datetime.now() - when
-    return max(0, AUDIT_RETENTION_DAYS - int(elapsed.total_seconds() // 86400))
+    elapsed = (datetime.now() - when).total_seconds()
+    # ROUNDED UP, deliberately. Flooring the elapsed days made the counter read
+    # "5 days left" for the first full twenty-four hours — an entry seventeen
+    # hours old still claimed a whole day remained — and, worse, it made the last
+    # day indistinguishable from the day before: something with an hour left read
+    # as "1 day left" and therefore never turned urgent until it had already
+    # expired. A countdown is read to answer "must I act now?", so a partly
+    # consumed day has to count as consumed. Integer arithmetic, not
+    # round(), which would round 0.5 days either way and reintroduce the same
+    # off-by-one in the middle of the range.
+    elapsed_days = -(-int(elapsed) // 86400)  # ceiling division
+    return max(0, AUDIT_RETENTION_DAYS - elapsed_days)
 
 
 def list_audit_log(limit: int = 50) -> pd.DataFrame:
