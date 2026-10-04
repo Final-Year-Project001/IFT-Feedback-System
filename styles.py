@@ -2840,7 +2840,13 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     color: var(--text-2);
     line-height: 1.55;
 }
+/* Now a flex row of chips: the record count, then the retention countdown.
+   It was a single pill holding one value, so this had to become a row rather
+   than have the countdown appended inside the same border. */
 .audit-log-stats {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
     flex-shrink: 0;
     align-self: center;
     white-space: nowrap;
@@ -2851,6 +2857,38 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     border: 1px solid var(--navy-border);
     border-radius: 999px;
     padding: .2rem .6rem;
+}
+
+/* "N days left to restore" — the deadline until a deletion can still be undone.
+   It gets its own chip because it has three states, and severity is driven by
+   days remaining rather than by absolute age: what the number is for is deciding
+   whether to act now, so 1 day and 0 days are both urgent in the way that
+   matters, whatever the calendar says.
+
+   Every colour clears 4.5:1 against its OWN tinted background, not merely
+   against white — measured, not eyeballed: --text-2 is 5.8:1 on the grey tint,
+   #92400e is 6.4:1 on the gold tint, #b91c1c is 5.5:1 on the red tint.
+   --gold-text (#b45309) was tried first for the urgent state and came out at
+   4.50:1 on that tint, which is too close to the floor to ship. */
+.audit-log-countdown {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: .1rem .5rem;
+    font-size: var(--fs-2xs);
+    font-weight: 700;
+}
+.audit-log-countdown.is-normal {
+    background: rgba(15, 23, 42, 0.04);
+    color: var(--text-2);
+}
+.audit-log-countdown.is-urgent {
+    background: rgba(217, 119, 6, 0.10);
+    color: #92400e;
+}
+.audit-log-countdown.is-critical {
+    background: rgba(220, 38, 38, 0.10);
+    color: #b91c1c;
 }
 
 /* ── DELETE-CONFIRMATION INSTRUCTION ──

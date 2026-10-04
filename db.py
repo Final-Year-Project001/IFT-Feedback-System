@@ -241,10 +241,32 @@ def _connect():
             reset_rows_deleted INTEGER NOT NULL DEFAULT 0,
             admin_corrections_deleted INTEGER NOT NULL DEFAULT 0,
             reason TEXT,
-            snapshot TEXT
+            snapshot TEXT,
+            restored_at TEXT
         )"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user ON admin_audit_log(target_username)")
+
+    # `restored_at` marks a DELETE_USER entry that has already been restored, so
+    # the audit trail stops offering to restore the same deletion twice. Without
+    # it the only available signal was "is this username in the users table",
+    # which cannot tell a restored account apart from one somebody re-registered
+    # — so it showed a successful restore as "Cannot restore: registered again",
+    # which reads exactly like a restore that failed.
+    #
+    # Added defensively for databases created before this column existed. The
+    # probe reads `information_schema` on PostgreSQL and `PRAGMA table_info` on
+    # SQLite, for the same reason the `feedback` probe below does.
+    if active_backend() == "postgresql":
+        audit_cols = {r[0] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'admin_audit_log'"
+        ).fetchall()}
+    else:
+        audit_cols = {r[1] for r in
+                      conn.execute("PRAGMA table_info(admin_audit_log)").fetchall()}
+    if "restored_at" not in audit_cols:
+        conn.execute("ALTER TABLE admin_audit_log ADD COLUMN restored_at TEXT")
 
     # F-08: the tombstone that stops `seed_admins` recreating a deliberately
     # deleted account. Separate from the audit log so that expiring audit rows
@@ -486,6 +508,14 @@ def _set_deletion_tombstone(username: str, present: bool):
     try:
         conn = get_db()
         if present:
+            # The timestamp is computed in Python and bound, not asked for with
+            # `datetime('now')`. That function is SQLite-only — PostgreSQL has
+            # no `datetime()` at all — so the statement failed there, the
+            # failure was swallowed by the except below, and the tombstone was
+            # silently never written, which is precisely the case it exists to
+            # cover: it is what stops `seed_admins` resurrecting a deleted
+            # account on the next page load.
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             # SQLite spells this `INSERT OR REPLACE`; PostgreSQL spells it as an
             # explicit conflict clause. Written out rather than rewritten by
             # pattern because the two conflict actions are genuinely different
@@ -494,15 +524,15 @@ def _set_deletion_tombstone(username: str, present: bool):
             if active_backend() == "postgresql":
                 conn.execute(
                     "INSERT INTO admin_deletion_tombstones (username, created_at) "
-                    "VALUES (?, datetime('now')) "
+                    "VALUES (?, ?) "
                     "ON CONFLICT (username) DO UPDATE SET created_at = EXCLUDED.created_at",
-                    (key,),
+                    (key, stamp),
                 )
             else:
                 conn.execute(
                     "INSERT OR REPLACE INTO admin_deletion_tombstones (username, created_at) "
-                    "VALUES (?, datetime('now'))",
-                    (key,),
+                    "VALUES (?, ?)",
+                    (key, stamp),
                 )
         else:
             conn.execute("DELETE FROM admin_deletion_tombstones WHERE username = ?", (key,))
@@ -1136,20 +1166,72 @@ def purge_expired_audit_rows(retention_days: int = AUDIT_RETENTION_DAYS) -> int:
         return 0
 
 
+def audit_days_remaining(performed_at: str) -> int:
+    """Whole days left before this entry is purged for good. Never negative.
+
+    Counted against `AUDIT_RETENTION_DAYS` from the moment the action happened,
+    not from when the page was opened, so two administrators reading the same
+    row an hour apart are not told two different numbers.
+
+    Clamped at 0 because an aged-out row is normally already gone by the sweep —
+    but "0 days left" is the truthful thing to render in the window between a
+    purge failing and the next attempt, where a negative count would read as a
+    bug rather than as an expiry.
+    """
+    try:
+        when = datetime.strptime(str(performed_at)[:19], "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        # An unparseable stamp is not worth hiding the entry over. Reporting the
+        # full window is the optimistic end of the range, which is the safer
+        # direction to be wrong in: it cannot talk someone out of restoring while
+        # there is still time to do it.
+        return AUDIT_RETENTION_DAYS
+    elapsed = datetime.now() - when
+    return max(0, AUDIT_RETENTION_DAYS - int(elapsed.total_seconds() // 86400))
+
+
 def list_audit_log(limit: int = 50) -> pd.DataFrame:
     """Returns recent administrative audit trail entries, newest first.
 
     Only entries inside the retention window exist, so anything older than
     `AUDIT_RETENTION_DAYS` has already been removed.
+
+    Two things are added here rather than selected from SQL:
+
+      * `days_remaining` — the countdown before the row is purged permanently.
+      * `snapshot` — normalised so that a NULL genuinely reads as absent. Left
+        alone, pandas hands a NULL TEXT column back as float NaN, and
+        `bool(nan)` is True, so a RESTORE_USER row (written with snapshot = NULL
+        by design) looks like it carries restore data. That was harmless only
+        because every caller happened to check the action first.
     """
     conn = get_db()
     query = """
         SELECT id, action, target_username, target_full_name, target_role,
-               performed_by, performed_at, feedback_rows_deleted, reason, snapshot
+               performed_by, performed_at, feedback_rows_deleted, reason, snapshot,
+               restored_at
         FROM admin_audit_log
         ORDER BY id DESC LIMIT ?
     """
-    return pd.read_sql_query(query, conn, params=(limit,))
+    frame = pd.read_sql_query(query, conn, params=(limit,))
+    if frame.empty:
+        return frame
+    # Rebuilt as an explicit object-dtype Series rather than with `.where()`.
+    # Two things go wrong otherwise, and both were hit in turn: `.where(cond,
+    # None)` preserves the column's inferred dtype, and a column of JSON strings
+    # mixed with a NULL gets inferred as pandas' `str` dtype — which coerces an
+    # assigned `None` straight back to float NaN, the very value this exists to
+    # eliminate. `dtype=object` is what makes None stick.
+    frame["snapshot"] = pd.Series(
+        [None if pd.isna(v) else v for v in frame["snapshot"]],
+        index=frame.index, dtype=object,
+    )
+    frame["restored_at"] = pd.Series(
+        [None if pd.isna(v) else v for v in frame["restored_at"]],
+        index=frame.index, dtype=object,
+    )
+    frame["days_remaining"] = [audit_days_remaining(v) for v in frame["performed_at"]]
+    return frame
 
 
 def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
@@ -1159,7 +1241,22 @@ def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
     Rows whose unique key has since been re-taken by someone else are skipped
     rather than aborting the whole restore, and the returned message states
     exactly how many rows were restored and how many were skipped.
+
+    The source deletion is marked `restored_at` in the same transaction as the
+    restore. That is what lets the audit trail stop offering the same deletion
+    again — previously it inferred "already restored" from the username being
+    present in the users table, which is also true after an unrelated
+    re-registration, so a successful restore was displayed as a refusal.
     """
+    # Coerced up front. A numpy integer (straight out of a DataFrame) is not
+    # accepted by sqlite3, which binds it as a BLOB; `WHERE id = <blob>` then
+    # matches nothing and the function reports that the deletion "is no longer
+    # in the audit trail" for a row that is sitting right there. Callers in the
+    # UI already wrap the value in int(), so this only ever protects the others.
+    try:
+        audit_id = int(audit_id)
+    except (TypeError, ValueError):
+        return False, "That restore request did not identify a valid audit entry."
     conn = get_db()
     row = conn.execute(
         "SELECT id, action, target_username, snapshot, performed_at FROM admin_audit_log WHERE id = ?",
@@ -1282,11 +1379,24 @@ def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
                 f"Restored from deletion audit entry #{audit_id}",
             ),
         )
+        # Mark the source deletion as consumed, in the same transaction as the
+        # restore itself. Same transaction matters: if the restore commits and
+        # this does not, the trail offers to redo work that is already done.
+        conn.execute(
+            "UPDATE admin_audit_log SET restored_at = ? WHERE id = ? AND action = 'DELETE_USER'",
+            (now_str, audit_id),
+        )
         conn.commit()
 
         # The account is back, so the "do not recreate this" tombstone must go
         # too — otherwise seed_admins would skip an account that now exists and
         # is perfectly healthy.
+        #
+        # Placed after the commit, and relied upon to never raise: the restore is
+        # already durable by this point, and `_set_deletion_tombstone` swallows
+        # its own failures. Moving it inside the guarded writes would risk
+        # reporting "Restore failed and was rolled back" for a restore that had
+        # actually succeeded.
         _set_deletion_tombstone(u_name, present=False)
 
         msg = f"The account '{u_name}' and {fb_restored} feedback record(s) were restored."

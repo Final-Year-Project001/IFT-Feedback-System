@@ -416,6 +416,33 @@ def _render_confirm_dialog(target: str, acting_user: str, reason: str):
 #  AUDIT TRAIL + RESTORE (F-07)
 # ══════════════════════════════════════════════════════════════════════
 
+def _countdown_class(days_left: int) -> str:
+    """Tone for the retention countdown, escalating as the window closes.
+
+    Severity is driven by days remaining rather than by absolute age, because
+    what the number is for is deciding whether to act now. Two days and zero
+    days are both "urgent" in the way that matters, whatever the dates are.
+    """
+    if days_left <= 1:
+        return "is-critical"   # last chance; the next sweep removes the row
+    if days_left <= 2:
+        return "is-urgent"
+    return "is-normal"
+
+
+def _countdown_text(days_left: int) -> str:
+    """Human wording for the countdown, stated as whole days.
+
+    Never says "0 days left" on its own, which reads as broken rather than as
+    imminent; the last day is named instead.
+    """
+    if days_left <= 0:
+        return "Last day — removed after today"
+    if days_left == 1:
+        return "1 day left to restore"
+    return f"{days_left} days left to restore"
+
+
 def _render_audit_log():
     section_header("history", "Deletion Audit Trail")
     st.caption(
@@ -423,7 +450,8 @@ def _render_audit_log():
         "A deletion stays here — with the full snapshot Restore needs — until "
         f"that window closes, then it is permanently removed so this page keeps "
         "showing what is current rather than growing forever. Restore an account "
-        f"within {db.AUDIT_RETENTION_DAYS} days or accept that it is gone."
+        f"within {db.AUDIT_RETENTION_DAYS} days or accept that it is gone. Each "
+        "entry below counts down the days it has left."
     )
     log = db.list_audit_log(limit=50)
     if log.empty:
@@ -442,7 +470,17 @@ def _render_audit_log():
     for _, row in log.iterrows():
         action = row["action"]
         is_delete = action == "DELETE_USER"
+        # `restored_at` is set by `restore_user` on the deletion it acted on, so
+        # this distinguishes "this deletion was undone" from "this username was
+        # taken by a different, later registration" — which is all the old
+        # username-in-the-users-table check could see, and which made a
+        # successful restore render as "Cannot restore: registered again".
+        already_restored = bool(row.get("restored_at"))
         icon_name = "trash-2" if is_delete else "rotate-ccw"
+        # Whole days before this entry — and the restore data it carries — are
+        # purged for good. Shown on every row, restored ones included, because a
+        # restored entry is still a row that will disappear.
+        days_left = int(row.get("days_remaining") or 0)
         # The tint is a design-system token rather than a literal hex, for two
         # reasons. `--green-text` is the AA-safe step: the icon is a 15px glyph
         # and needs 3:1 (WCAG 1.4.11), which the fill green `#059669` only just
@@ -471,6 +509,8 @@ def _render_audit_log():
             f'</div>'
             f'<div class="audit-log-stats">'
             f'<span>{esc(row["feedback_rows_deleted"])} feedback</span>'
+            f'<span class="audit-log-countdown {esc(_countdown_class(days_left))}">'
+            f'{esc(_countdown_text(days_left))}</span>'
             f"</div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -482,6 +522,21 @@ def _render_audit_log():
         # is inside the window and restorable.
         if not is_delete or not row["snapshot"]:
             continue
+
+        # Already undone. The entry itself stays, because an audit trail that
+        # rewrote itself would be worthless — but every trace of the restore
+        # control is cleared, so nothing is left on screen implying the account
+        # is still missing.
+        if already_restored:
+            st.caption(
+                f"Restored on {str(row['restored_at'])[:16].replace('T', ' ')} — this "
+                "deletion has been undone and the account is active again, so there "
+                "is nothing left to restore. The entry is kept as a record and is "
+                f"removed with the rest of the audit trail in "
+                f"{db.AUDIT_RETENTION_DAYS} days."
+            )
+            continue
+
         if db.username_exists(target):
             # Name the cause. The old wording — "'X' is in use again, so this
             # deletion cannot be restored" — was accurate but left an
@@ -502,8 +557,12 @@ def _render_audit_log():
             f"Restore {target}", icon=":material/undo:",
             key=f"um_restore_{int(row['id'])}",
         ):
-            ok, msg = db.restore_user(int(row["id"]), restored_by=st.session_state.get("username", "admin"))
-            _park(msg, "success" if ok else "error")
+            # Arms a confirmation instead of restoring outright. A restore
+            # rewrites the live account row from the snapshot, and this list can
+            # hold several identically shaped Restore buttons at once — which is
+            # precisely where a single stray press acts on the wrong account.
+            st.session_state["um_pending_restore"] = int(row["id"])
+            st.session_state["um_pending_restore_name"] = target
             st.rerun()
 
 
@@ -836,6 +895,85 @@ def _run_training():
 #  PAGE ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════
+#  RESTORE CONFIRMATION DIALOG
+# ══════════════════════════════════════════════════════════════════════
+
+def _render_restore_dialog(audit_id: int, username: str, acting_user: str,
+                           days_left: int):
+    """The modal. Sets `um_restore_now` only when the operator confirms.
+
+    Deliberately lighter than the deletion dialog: that one guards an
+    irreversible act, this one guards a recoverable one. There is no typed
+    username and no acknowledgement box, because the restore puts the account
+    back the way it was rather than destroying anything — an administrator
+    reversing a mistake should not have to type their way past a warning that
+    overstates the risk.
+
+    What it does spell out is the one thing that is genuinely surprising: the
+    restore overwrites the current state of the account with the snapshot, and
+    password-reset codes are not restored.
+    """
+    row = db.get_db().execute(
+        "SELECT performed_at, feedback_rows_deleted, reason FROM admin_audit_log WHERE id = ?",
+        (int(audit_id),),
+    ).fetchone()
+    deleted_at = str(row[0])[:16] if row else "an earlier date"
+    fb_count = int(row[1]) if row else 0
+    reason = (row[2] if row else "") or "No reason recorded"
+
+    @st_compat.dialog("Confirm account restore", width="large")
+    def _dialog():
+        st.markdown(
+            f'<div class="confirm-summary">'
+            f'<div class="confirm-row">'
+            f'<span class="confirm-row-key">Account</span>'
+            f'<span class="confirm-row-val">{esc(username)}</span></div>'
+            f'<div class="confirm-row">'
+            f'<span class="confirm-row-key">Deleted on</span>'
+            f'<span class="confirm-row-val">{esc(deleted_at)}</span></div>'
+            f'<div class="confirm-row">'
+            f'<span class="confirm-row-key">Reason recorded</span>'
+            f'<span class="confirm-row-val">{esc(reason)}</span></div>'
+            f'<div class="confirm-row">'
+            f'<span class="confirm-row-key">Feedback restored</span>'
+            f'<span class="confirm-row-val">{esc(fb_count)}</span></div>'
+            f'<div class="confirm-row">'
+            f'<span class="confirm-row-key">Days left to restore</span>'
+            f'<span class="confirm-row-val">{esc(_countdown_text(days_left))}</span></div>'
+            f'<div class="confirm-row">'
+            f'<span class="confirm-row-key">Restored by</span>'
+            f'<span class="confirm-row-val">{esc(acting_user)}</span></div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        html_alert(
+            "The account returns with its original password, role, level and "
+            "feedback. Any password-reset code issued to it is not restored — the "
+            "student must request a new one.",
+            "info",
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            confirm = st_compat.button(
+                "Restore this account", icon=":material/undo:",
+                type="primary", width="stretch", key="um_confirm_restore",
+            )
+        with c2:
+            if st_compat.button("Cancel", width="stretch", key="um_cancel_restore"):
+                st.session_state.pop("um_pending_restore", None)
+                st.session_state.pop("um_pending_restore_name", None)
+                st.rerun()
+
+        if confirm:
+            st.session_state["um_restore_now"] = True
+            st.rerun()
+
+    _dialog()
+    return bool(st.session_state.get("um_restore_now"))
+
+
 def show_user_management(acting_user: str, user: dict | None = None):
     """Renders the administrative user management screen."""
     page_header(
@@ -904,6 +1042,29 @@ def show_user_management(acting_user: str, user: dict | None = None):
             for key in ("um_pending_delete", "um_pending_reason", "um_delete_now",
                         "um_typed_username", "um_typed_admin_phrase", "um_acknowledged",
                         "um_target"):
+                st.session_state.pop(key, None)
+            _park(msg, "success" if ok else "error")
+            st.rerun()
+
+    # ── Restore: same two-step shape as the delete modal above ──
+    pending_restore = st.session_state.get("um_pending_restore")
+    if pending_restore:
+        # Read the countdown from the live row rather than trusting whatever was
+        # parked when the button was armed, so the dialog cannot quote a stale
+        # "days left" after the page has been open a while.
+        _entry = db.list_audit_log(limit=50)
+        _entry = _entry[_entry["id"] == int(pending_restore)]
+        _days_left = int(_entry["days_remaining"].iloc[0]) if len(_entry) else 0
+        confirmed = _render_restore_dialog(
+            int(pending_restore),
+            st.session_state.get("um_pending_restore_name", "this account"),
+            acting_user,
+            _days_left,
+        )
+        if confirmed:
+            ok, msg = db.restore_user(int(pending_restore), restored_by=acting_user)
+            for key in ("um_pending_restore", "um_pending_restore_name",
+                        "um_restore_now", "um_target"):
                 st.session_state.pop(key, None)
             _park(msg, "success" if ok else "error")
             st.rerun()
