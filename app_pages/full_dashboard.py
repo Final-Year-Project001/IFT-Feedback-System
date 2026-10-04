@@ -12,6 +12,7 @@ from db import (
     load_data, parse_context, context_text_list, correct_sentiment,
     get_academic_sessions, get_active_session, create_academic_session,
     set_default_session, get_session_stats,
+    delete_academic_session, count_session_submissions,
 )
 from charts import make_rating_bar, make_category_radar, make_sentiment_pie, make_level_pie, make_trend_line
 from components import html_metric, page_header, section_header, empty_state, esc, html_alert
@@ -333,6 +334,55 @@ def _render_session_manager(admin_username: str):
                             st.rerun()
                         else:
                             st.error(msg)
+
+                # Deleting a session, with a confirmation. Same rule as the
+                # account-deletion flow on the User Management page: a list of
+                # identically shaped buttons is exactly where one stray press acts
+                # on the wrong row, and this one removes the session every filter
+                # in the app offers.
+                #
+                # The two refusals are enforced in db.py rather than by hiding the
+                # button, because the rules depend on live state (is this still
+                # the only session? is it still the default?) that a render-time
+                # check and the eventual click could disagree about.
+                if not is_cur_def and len(sessions) > 1:
+                    _pending = f"delete_session_{sess}"
+                    if st.session_state.get(_pending):
+                        _n = count_session_submissions(sess)
+                        st.warning(
+                            f"Delete academic session '{sess}'? It will no longer be "
+                            "offered as a filter anywhere in the app."
+                            + (f" Its {_n} submission(s) are kept and remain counted "
+                               f"under {ALL_SESSIONS_LABEL}." if _n else ""),
+                            icon=":material/warning:",
+                        )
+                        _c1, _c2 = st.columns(2)
+                        with _c1:
+                            if st_compat.button(
+                                "Yes, delete it", key=f"{_pending}_yes",
+                                type="primary", use_container_width=True,
+                            ):
+                                ok, msg = delete_academic_session(
+                                    sess, admin_username, confirmed=True)
+                                st.session_state.pop(_pending, None)
+                                if ok:
+                                    st.session_state["flash_message"] = msg
+                                    st.session_state["flash_kind"] = "success"
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                        with _c2:
+                            if st_compat.button(
+                                "Cancel", key=f"{_pending}_no", use_container_width=True,
+                            ):
+                                st.session_state.pop(_pending, None)
+                                st.rerun()
+                    elif st_compat.button(
+                        f"Delete '{sess}'", key=f"{_pending}_ask",
+                        icon=":material/delete:", use_container_width=True,
+                    ):
+                        st.session_state[_pending] = True
+                        st.rerun()
 
         with col_right:
             st.markdown(f'<div style="font-size:.78rem;font-weight:700;color:var(--text-1);margin-bottom:.5rem;">{i("plus-circle", 13)} Create New Session</div>', unsafe_allow_html=True)

@@ -1679,6 +1679,102 @@ def create_academic_session(session_name: str, created_by: str, set_default: boo
         return False, f"Error creating session: {e}"
 
 
+def count_session_submissions(session_name: str) -> int:
+    """How many feedback rows belong to this session.
+
+    Reported before a session is removed so the administrator knows what the
+    deletion costs. The rows are NOT deleted — see `delete_academic_session`.
+    """
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM feedback WHERE session = ?", ((session_name or "").strip(),)
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def delete_academic_session(session_name: str, deleted_by: str,
+                            confirmed: bool = False) -> tuple[bool, str]:
+    """Removes an academic session from the session list. Admin only; B-30.
+
+    Two refusals, and neither is arbitrary:
+
+      * The ACTIVE DEFAULT cannot be deleted. `get_active_session()` reads that
+        flag, and `feedback.session` carries a DDL default of it, so removing it
+        leaves new submissions defaulting to a session that no longer exists in
+        the list. The fix is to promote another session first, which is a
+        deliberate act rather than a side effect of a delete button.
+      * The LAST remaining session cannot be deleted. The student portal and every
+        filter are built around a session, so an app with none has nothing to show.
+
+    `confirmed` must be passed by the caller, so this cannot be reached by a
+    single stray click the way an unguarded button can.
+
+    Feedback rows are deliberately LEFT ALONE. Deleting a session is a
+    housekeeping act about which sessions are offered, not a request to destroy
+    student submissions — and the rows stay reachable through the aggregate filter and
+    through `load_data(session=...)`, so nothing is lost, they simply stop being
+    individually selectable. The count is returned so the UI can say so.
+    """
+    name = (session_name or "").strip()
+    if not name:
+        return False, "No session was named."
+    if not confirmed:
+        return False, "Deleting a session must be confirmed before it happens."
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, is_default FROM academic_sessions WHERE session_name = ?", (name,)
+    ).fetchone()
+    if not row:
+        return False, f"Academic session '{name}' does not exist."
+
+    total = conn.execute("SELECT COUNT(*) FROM academic_sessions").fetchone()[0]
+    if total <= 1:
+        return False, (
+            f"'{name}' is the only academic session, so it cannot be deleted. "
+            "Create the next session first."
+        )
+    if row[1]:
+        return False, (
+            f"'{name}' is the active default session and cannot be deleted. Make "
+            "another session the active default first, then delete this one."
+        )
+
+    submissions = count_session_submissions(name)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn.execute("DELETE FROM academic_sessions WHERE session_name = ?", (name,))
+        # Recorded in the same trail as user deletions. It is not a DELETE_USER row,
+        # so it never appears in the pending-restoration panel — it is history,
+        # readable from `admin_audit_log` and aged out with everything else.
+        conn.execute(
+            """INSERT INTO admin_audit_log (
+                action, target_username, target_full_name, target_role,
+                performed_by, performed_at, feedback_rows_deleted,
+                reset_rows_deleted, admin_corrections_deleted, reason, snapshot
+            ) VALUES (?,?,?,?,?,?,?,0,0,?,NULL)""",
+            (
+                "DELETE_SESSION", name, None, "academic_session", deleted_by, now_str,
+                submissions,
+                f"Deleted by {deleted_by}; {submissions} submission(s) retained "
+                f"and still visible under {ALL_SESSIONS_LABEL}",
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        return False, "The session could not be deleted. No changes were made."
+
+    msg = f"Academic session '{name}' has been deleted."
+    if submissions:
+        msg += (
+            f" Its {submissions} submission(s) were kept — they are still counted "
+            f"under {ALL_SESSIONS_LABEL}, but this session is no longer offered as "
+            "a filter."
+        )
+    return True, msg
+
+
 def set_default_session(session_name: str) -> bool:
     """Designates an existing session as the active default session (B-30)."""
     conn = get_db()

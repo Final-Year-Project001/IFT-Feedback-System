@@ -182,19 +182,42 @@ import time
 _SESSION_PARAM = "futo_sess"        # query-param name carrying the token
 _SESSION_TOKEN_KEY = "futo_session_token"  # session_state mirror of it
 
-# AppTest drives the script through a `LocalScriptRunner` instead of the real
-# websocket runner, and that is a property of the RUN, not of this module — so
-# it is the thing to test, rather than sniffing for "pytest" in sys.modules
-# (which is absent when the suite is run directly by `run_all.py`).
+# AppTest drives the script through a synthetic runner rather than the real
+# websocket one, and it advertises itself: every session it creates carries an
+# internal marker key in `st.session_state`. That is what this tests.
 #
-# Persistence is switched off under AppTest for two reasons: there is no
-# browser to keep signed in, and writing a row would let a test that signs in
-# as an administrator leak that state into a later `fresh()` that is supposed
-# to see the login page. The token itself is already per-AppTest (each
-# `AppTest.from_file()` starts with empty query params), so the rows could not
-# collide — this simply keeps the test's database copy clean.
+# It used to sniff `sys.modules` for "pytest"/"unittest" instead, and that trap
+# had already sprung. `import sklearn` pulls `unittest` in as a side effect, and
+# the app imports sklearn via sentiment.py and train_model.py -- so on a deployed
+# container this function returned True and the whole session-persistence layer
+# silently switched itself off. Signing in wrote no row, so every refresh logged
+# the user out. The symptom looked like Streamlit dropping the cookie; the cause
+# was a test detector that an ordinary third-party import could switch off.
+#
+# The module sniff survives only as a last-resort fallback, because `run_all.py`
+# is not pytest and reaches unittest the same indirect way. The marker is checked
+# first and wins.
+_STREAM_TESTING_MARKER = "$$STREAMLIT_INTERNAL_KEY_TESTING"
+
+
 def _is_test_run() -> bool:
-    if "pytest" in sys.modules or "unittest" in sys.modules:
+    """True when a test harness is driving this script rather than a browser.
+
+    Persistence is switched off in that case for two reasons: there is no browser
+    to keep signed in, and writing a row would let a test that signs in as an
+    administrator leak that state into a later run that expects the login page.
+    Each AppTest instance starts with empty query params and so mints its own
+    token, meaning the rows could not collide regardless -- this only keeps the
+    test's database copy clean.
+    """
+    try:
+        if _STREAM_TESTING_MARKER in st.session_state:
+            return True
+    except Exception:
+        # No session context at all (a bare `import app`): there is nothing to
+        # persist to, so treat it as a test run rather than write a stray row.
+        return True
+    if "pytest" in sys.modules:
         return True
     try:
         runner = st.runtime.scriptrunner
