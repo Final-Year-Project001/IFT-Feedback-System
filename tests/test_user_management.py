@@ -280,8 +280,17 @@ check("training set has the user back",
       f"{len(train)} rows")
 
 log = db.list_audit_log()
-check("a RESTORE_USER entry was appended", len(log) == 2 and log.iloc[0]["action"] == "RESTORE_USER",
-      list(log["action"]))
+# A restore now marks the deletion it undid (restored_at) instead of appending a
+# RESTORE_USER row. Two rows for one event is what let a repeatedly-clicked restore
+# pile up identical "Restored X" entries all pointing at the same deletion, and the
+# trail is meant to show outstanding work only. The audit row itself is kept.
+dele = log[log["action"] == "DELETE_USER"]
+check("no redundant RESTORE_USER entry was appended",
+      not (log["action"] == "RESTORE_USER").any(), list(log["action"]))
+check("the deletion it undid is marked restored_at instead",
+      bool(dele["restored_at"].iloc[0]), dele["restored_at"].iloc[0])
+check("and it is no longer offered for restoration",
+      dele["target_username"].iloc[0] not in set(db.list_pending_deletions()["target_username"]))
 
 # restore must refuse to clobber a live account
 conn.execute("DELETE FROM feedback WHERE LOWER(username)='zzvictim'")
@@ -527,9 +536,19 @@ ok, msg = db.restore_user(recent, restored_by="admin001")
 check("a deletion inside the window is still restorable", ok, msg)
 check("...and the account is back", db.username_exists("ZZRecent"))
 
-# The purge is idempotent, so running it twice must not double-count or error.
+# The purge is idempotent, so running it repeatedly must not double-count or
+# error. It is also now responsible for clearing RESTORE_USER rows, which are
+# redundant with the `restored_at` mark on the deletion they undo -- so this sweep
+# has real work to do (the `live_restore` row built above is two days old and
+# would previously have survived on age alone), and the next must then be a no-op.
 again = db.purge_expired_audit_rows()
-check("a second purge is a no-op", again == 0, again)
+check("the purge clears redundant RESTORE_USER rows, not only expired ones",
+      again >= 1, again)
+check("...and no RESTORE_USER row survives it",
+      not db.get_db().execute(
+          "SELECT 1 FROM admin_audit_log WHERE action = 'RESTORE_USER'").fetchall())
+third = db.purge_expired_audit_rows()
+check("a following purge is a no-op", third == 0, third)
 check("the restored row is still there", _row_exists(recent))
 
 # get_db() purges on connect, so entries age out without anything calling it.

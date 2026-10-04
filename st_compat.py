@@ -58,6 +58,44 @@ _WIDTH_SUPPORTS_KW = _supports_kwarg(getattr(st, "button", None), "width")
 # `st.segmented_control` landed in 1.40; older versions get a radio instead.
 _HAS_SEGMENTED_CONTROL = callable(getattr(st, "segmented_control", None))
 
+# `st.fragment(run_every=...)` landed in 1.37 and is the only built-in way to get
+# a repeating callback — Streamlit has no timer. Used here to clear a
+# confirmation message on a wall-clock deadline rather than on the next click.
+_HAS_FRAGMENT = callable(getattr(st, "fragment", None))
+_HAS_SCOPED_RERUN = _supports_kwarg(getattr(st, "rerun", None), "scope")
+
+
+def autorun_fragment(interval: str):
+    """Decorator: re-run the wrapped function every `interval`, if supported.
+
+    On a Streamlit too old for fragments the function is returned unchanged and
+    behaves as an ordinary call. That is a real degradation — the message would
+    then clear on the next interaction instead of after `interval` — but it is a
+    cosmetic one, and silently failing to render the message at all would not be.
+    """
+    def decorate(func):
+        if not _HAS_FRAGMENT:
+            return func
+        try:
+            return st.fragment(run_every=interval)(func)
+        except TypeError:
+            # The installed version has `st.fragment` but not `run_every`.
+            return func
+
+    return decorate
+
+
+def rerun_fragment():
+    """Re-runs just the current fragment, where that is meaningful.
+
+    Falls back to a full rerun on versions without `scope`, which is correct
+    rather than broken — it just redraws more than strictly necessary.
+    """
+    if _HAS_SCOPED_RERUN:
+        st.rerun(scope="fragment")
+    else:
+        st.rerun()
+
 
 def _call(func, *args, **kwargs):
     """Calls a Streamlit function, dropping keywords it does not accept.

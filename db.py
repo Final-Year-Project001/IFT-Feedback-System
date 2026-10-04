@@ -1141,14 +1141,37 @@ AUDIT_SNAPSHOT_RETENTION_DAYS = AUDIT_RETENTION_DAYS
 
 
 def _purge_expired_audit_rows(conn, retention_days: int = AUDIT_RETENTION_DAYS) -> int:
-    """Deletes audit rows older than the retention window, on an existing connection.
+    """Deletes expired audit rows, plus redundant restore rows, on an existing connection.
 
     Takes the connection rather than calling get_db(), so get_db() can call
     this on the connection it is still building. Returns the rows removed.
+
+    Two different deletions, and the distinction matters:
+
+      * `DELETE_USER` rows age out after the retention window, carrying their
+        snapshot with them.
+      * `RESTORE_USER` rows are removed IMMEDIATELY, whatever their age.
+
+    The second is new, and it exists because those rows became redundant. A
+    restore now marks the deletion it undid via `admin_audit_log.restored_at`,
+    which is the durable record. The separate RESTORE_USER row said the same
+    thing twice — and because it was appended rather than replacing anything, one
+    mistaken restore that could be clicked repeatedly produced a wall of identical
+    "Restored X" entries all pointing at the same deletion. Those rows also carry
+    snapshot = NULL, so nothing restorable is lost by deleting them.
     """
     cutoff = (datetime.now() - timedelta(days=retention_days)).strftime("%Y-%m-%d %H:%M:%S")
     cur = conn.execute("DELETE FROM admin_audit_log WHERE performed_at < ?", (cutoff,))
-    return cur.rowcount
+    removed = cur.rowcount
+    try:
+        restored = conn.execute(
+            "DELETE FROM admin_audit_log WHERE action = 'RESTORE_USER'"
+        ).rowcount
+        removed += restored or 0
+    except Exception:
+        # Never let housekeeping of a redundant row stop the real purge above.
+        pass
+    return removed
 
 
 def purge_expired_audit_rows(retention_days: int = AUDIT_RETENTION_DAYS) -> int:
@@ -1164,6 +1187,34 @@ def purge_expired_audit_rows(retention_days: int = AUDIT_RETENTION_DAYS) -> int:
     except Exception:
         conn.rollback()
         return 0
+
+
+def list_pending_deletions(limit: int = 50) -> pd.DataFrame:
+    """The deletions that can STILL be restored — i.e. the working list.
+
+    Three things are excluded, and each exclusion was a defect when it was shown:
+
+      * `RESTORE_USER` rows. They are redundant now that a restore marks the
+        deletion it undid, and they were what turned one mistaken restore into a
+        column of identical entries.
+      * Deletions already undone (`restored_at` set). Listing them made a
+        finished job look outstanding.
+      * Rows whose snapshot has gone. There is nothing left to restore from, so
+        offering a Restore button would be a lie.
+
+    `list_audit_log` still returns the full history; this is the view the page
+    renders. Keeping both means the audit trail remains queryable in full while
+    the administrator only ever sees work that is actually outstanding.
+    """
+    frame = list_audit_log(limit=max(limit * 4, limit + 50))
+    if frame.empty:
+        return frame
+    pending = frame[
+        (frame["action"] == "DELETE_USER")
+        & (frame["snapshot"].notna())
+        & (frame["restored_at"].isna())
+    ]
+    return pending.head(limit).reset_index(drop=True)
 
 
 def audit_days_remaining(performed_at: str) -> int:
@@ -1187,17 +1238,23 @@ def audit_days_remaining(performed_at: str) -> int:
         # there is still time to do it.
         return AUDIT_RETENTION_DAYS
     elapsed = (datetime.now() - when).total_seconds()
-    # ROUNDED UP, deliberately. Flooring the elapsed days made the counter read
-    # "5 days left" for the first full twenty-four hours — an entry seventeen
-    # hours old still claimed a whole day remained — and, worse, it made the last
-    # day indistinguishable from the day before: something with an hour left read
-    # as "1 day left" and therefore never turned urgent until it had already
-    # expired. A countdown is read to answer "must I act now?", so a partly
-    # consumed day has to count as consumed. Integer arithmetic, not
-    # round(), which would round 0.5 days either way and reintroduce the same
-    # off-by-one in the middle of the range.
-    elapsed_days = -(-int(elapsed) // 86400)  # ceiling division
-    return max(0, AUDIT_RETENTION_DAYS - elapsed_days)
+    # The REMAINING time is rounded, not the elapsed time — and that distinction
+    # is the whole function, because both obvious alternatives are wrong at one
+    # end or the other:
+    #
+    #   floor(elapsed days): reads "5 days left" for the first full 24 hours, so
+    #     an entry with one hour left claimed a whole day remained and the
+    #     last-day warning never fired until after expiry.
+    #   ceil(elapsed days): a row created two seconds ago immediately reads
+    #     "4 days left", having consumed a day it never had.
+    #
+    # Rounding what is left is correct at both ends: a fresh row shows the full
+    # window, an entry 17 hours old shows 4, and one inside its final 24 hours
+    # shows 0 — which the UI words as "Last day" rather than as a bare zero.
+    # Half-up, via int() rather than round(), which rounds halves to even and
+    # would make 4.5 days read 4 on one visit and 5 on the next.
+    remaining = AUDIT_RETENTION_DAYS - elapsed / 86400.0
+    return max(0, int(remaining + 0.5))
 
 
 def list_audit_log(limit: int = 50) -> pd.DataFrame:
@@ -1417,22 +1474,18 @@ def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
         )
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute(
-            """INSERT INTO admin_audit_log (
-                action, target_username, target_full_name, target_email,
-                target_role, target_level, performed_by, performed_at,
-                feedback_rows_deleted, reset_rows_deleted, admin_corrections_deleted,
-                reason, snapshot
-            ) VALUES (?,?,?,?,?,?,?,?,0,0,0,?,NULL)""",
-            (
-                "RESTORE_USER", u_name, u_data.get("full_name"), u_data.get("email"),
-                u_data.get("role"), u_data.get("level"), restored_by, now_str,
-                f"Restored from deletion audit entry #{audit_id}",
-            ),
-        )
-        # Mark the source deletion as consumed, in the same transaction as the
-        # restore itself. Same transaction matters: if the restore commits and
-        # this does not, the trail offers to redo work that is already done.
+        # The deletion is marked as undone INSTEAD of appending a RESTORE_USER
+        # row. Two entries for one event is what produced the pile of identical
+        # "Restored X" lines — one per click, all referencing the same deletion —
+        # and the mark on the original row is the better record anyway: it keeps
+        # the deletion and its reversal together, and it removes the restored
+        # account from the list of things awaiting restoration rather than
+        # adding to it. The row is retained for the rest of the window so the
+        # audit trail still records that the deletion happened and was undone.
+        #
+        # `reason` is deliberately left alone: it is the operator's stated reason
+        # for deleting, and overwriting it with the fact of the restore would
+        # destroy the only part of that entry nobody else wrote.
         conn.execute(
             "UPDATE admin_audit_log SET restored_at = ? WHERE id = ? AND action = 'DELETE_USER'",
             (now_str, audit_id),

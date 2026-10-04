@@ -22,6 +22,8 @@ Design constraints this page is built around:
 
 from __future__ import annotations
 
+import time
+
 import streamlit as st
 
 import db
@@ -42,16 +44,64 @@ ADMIN_DELETE_PHRASE = "DELETE ADMIN"
 #  ACCOUNT DIRECTORY
 # ══════════════════════════════════════════════════════════════════════
 
-def _flash():
-    """Shows and clears a message parked by an action on this page."""
-    msg = st.session_state.pop("um_flash", None)
-    if msg:
-        getattr(st, st.session_state.pop("um_flash_kind", "success"))(msg)
+# How long an action confirmation stays on screen. Long enough to read a
+# two-line message about what was just deleted or restored, short enough that it
+# is not still there when the administrator moves on to the next thing.
+_FLASH_SECONDS = 10
 
 
 def _park(message: str, kind: str = "success"):
     st.session_state["um_flash"] = message
     st.session_state["um_flash_kind"] = kind
+    # Stamped rather than left to a rerun to clear, because the clearing is timed
+    # and a rerun is not: session_state has no expiry of its own.
+    st.session_state["um_flash_at"] = time.time()
+
+
+def _flash_remaining(now: float | None = None) -> float | None:
+    """Seconds left before the parked confirmation clears. None if none is parked.
+
+    Split out from `_flash` and given an injectable clock so the timing can be
+    tested directly: `_flash` is wrapped in a Streamlit fragment, and a
+    fragment-wrapped function cannot simply be called to exercise it.
+    """
+    if not st.session_state.get("um_flash"):
+        return None
+    now = time.time() if now is None else now
+    parked = float(st.session_state.get("um_flash_at") or now)
+    return _FLASH_SECONDS - (now - parked)
+
+
+def _clear_flash() -> None:
+    for key in ("um_flash", "um_flash_kind", "um_flash_at"):
+        st.session_state.pop(key, None)
+
+
+@st_compat.autorun_fragment("10s")
+def _flash():
+    """Shows the confirmation parked by an action, and clears it after 10s.
+
+    Wrapped in a timed fragment because Streamlit has no timer of its own, and a
+    message parked in session_state otherwise stays up until the next click —
+    which is most of a session. Only this fragment re-runs, not the page.
+
+    Returns quietly when nothing is parked, so the recurring tick costs almost
+    nothing once the message has gone.
+    """
+    remaining = _flash_remaining()
+    if remaining is None:
+        return
+    if remaining <= 0:
+        _clear_flash()
+        st_compat.rerun_fragment()
+        return
+    kind = st.session_state.get("um_flash_kind", "success")
+    getattr(st, kind)(st.session_state["um_flash"])
+    count = int(remaining) + 1
+    st.caption(
+        f"This message clears on its own in {count} second"
+        f"{'s' if count != 1 else ''}."
+    )
 
 
 def _render_directory():
@@ -444,65 +494,58 @@ def _countdown_text(days_left: int) -> str:
 
 
 def _render_audit_log():
-    section_header("history", "Deletion Audit Trail")
+    section_header("history", "Deletions Awaiting Restoration")
     st.caption(
-        f"Deletions and restorations from the last {db.AUDIT_RETENTION_DAYS} days. "
-        "A deletion stays here — with the full snapshot Restore needs — until "
-        f"that window closes, then it is permanently removed so this page keeps "
-        "showing what is current rather than growing forever. Restore an account "
-        f"within {db.AUDIT_RETENTION_DAYS} days or accept that it is gone. Each "
-        "entry below counts down the days it has left."
+        f"Every account deleted in the last {db.AUDIT_RETENTION_DAYS} days that "
+        "can still be put back, each counting down the days it has left. An entry "
+        "disappears the moment it is restored, so nothing is left behind to imply "
+        "the work is still outstanding, and is deleted for good once its window "
+        f"closes. Restore within {db.AUDIT_RETENTION_DAYS} days or accept that "
+        "the account is gone."
     )
-    log = db.list_audit_log(limit=50)
+    # Only outstanding work is rendered. Restored deletions and restoration rows
+    # are excluded by the query rather than filtered out per row below, so the
+    # page cannot fall into rendering a state it was not written for.
+    log = db.list_pending_deletions(limit=50)
     if log.empty:
-        # Distinguish "nothing has happened" from "everything aged out", because
-        # they look identical once rows are purged and an administrator
-        # wondering "did my deletion get lost?" deserves a real answer.
+        # Distinguish "nothing has happened" from "everything dealt with", because
+        # they look identical once rows are purged and an administrator wondering
+        # "did my deletion get lost?" deserves a real answer.
         empty_state(
             "history",
-            f"Nothing in the Last {db.AUDIT_RETENTION_DAYS} Days",
-            f"Deletions and restorations are kept for {db.AUDIT_RETENTION_DAYS} days "
-            f"and then removed, so this panel is empty until something is deleted — "
-            "or until older entries have aged out.",
+            "Nothing Awaiting Restoration",
+            "No deleted account is currently restorable. An entry appears here "
+            "the moment an account is deleted, and leaves again when it is "
+            f"restored or after {db.AUDIT_RETENTION_DAYS} days.",
         )
         return
 
     for _, row in log.iterrows():
-        action = row["action"]
-        is_delete = action == "DELETE_USER"
-        # `restored_at` is set by `restore_user` on the deletion it acted on, so
-        # this distinguishes "this deletion was undone" from "this username was
-        # taken by a different, later registration" — which is all the old
-        # username-in-the-users-table check could see, and which made a
-        # successful restore render as "Cannot restore: registered again".
-        already_restored = bool(row.get("restored_at"))
-        icon_name = "trash-2" if is_delete else "rotate-ccw"
-        # Whole days before this entry — and the restore data it carries — are
-        # purged for good. Shown on every row, restored ones included, because a
-        # restored entry is still a row that will disappear.
+        # Every row here is a deletion awaiting restoration. `list_pending_deletions`
+        # has already removed restored deletions, restoration rows and rows with no
+        # snapshot, so the per-row branches that used to handle those states are
+        # gone rather than left as dead code: a page that renders states its query
+        # can no longer produce is a page nobody is testing.
+        target = row["target_username"]
+        when = str(row["performed_at"] or "")[:16]
         days_left = int(row.get("days_remaining") or 0)
         # The tint is a design-system token rather than a literal hex, for two
-        # reasons. `--green-text` is the AA-safe step: the icon is a 15px glyph
-        # and needs 3:1 (WCAG 1.4.11), which the fill green `#059669` only just
-        # clears at 3.77:1, so a literal here would be one accidental change
-        # away from failing. And `var()` resolves inside an inline style, so the
-        # chip's `color-mix(..., currentColor, ...)` in the stylesheet derives
-        # its background from whatever the token evaluates to — re-tinting the
-        # palette needs no change here.
+        # reasons. `--red` is the AA-safe step for the text, and `var()` resolves
+        # inside an inline style, so the chip's `color-mix(..., currentColor, ...)`
+        # in the stylesheet derives its background from whatever the token
+        # evaluates to — re-tinting the palette needs no change here.
         #
-        # The glyph itself is left on `currentColor` (the `icon()` default) so
-        # it inherits from the wrapper's inline colour rather than repeating
-        # the value a second time in a second place.
-        tint = "var(--red)" if is_delete else "var(--green-text)"
-        when = str(row["performed_at"] or "")[:16]
-        target = row["target_username"]
+        # The glyph is left on `currentColor` (the `icon()` default) so it inherits
+        # from the wrapper's inline colour rather than repeating the value in a
+        # second place.
+        tint = "var(--red)"
 
         st.markdown(
             f'<div class="audit-log-row">'
-            f'<div class="audit-log-icon" style="color:{tint};">{i(icon_name, 15)}</div>'
+            f'<div class="audit-log-icon" style="color:{tint};">{i("trash-2", 15)}</div>'
             f'<div class="audit-log-body">'
             f'<div class="audit-log-title">'
-            f'{"Deleted" if is_delete else "Restored"} <strong>{esc(target)}</strong>'
+            f'Deleted <strong>{esc(target)}</strong>'
             f'<span class="audit-log-meta">by {esc(row["performed_by"] or "unknown")}'
             f' · {esc(when)}</span></div>'
             f'<div class="audit-log-reason">{esc(row["reason"] or "No reason recorded")}</div>'
@@ -516,43 +559,24 @@ def _render_audit_log():
             unsafe_allow_html=True,
         )
 
-        # Only a DELETE is restorable, and only while the username is free.
-        # A deletion whose window has closed is no longer a row at all (F-08),
-        # so there is no "expired" case to render here — anything still listed
-        # is inside the window and restorable.
-        if not is_delete or not row["snapshot"]:
-            continue
-
-        # Already undone. The entry itself stays, because an audit trail that
-        # rewrote itself would be worthless — but every trace of the restore
-        # control is cleared, so nothing is left on screen implying the account
-        # is still missing.
-        if already_restored:
-            st.caption(
-                f"Restored on {str(row['restored_at'])[:16].replace('T', ' ')} — this "
-                "deletion has been undone and the account is active again, so there "
-                "is nothing left to restore. The entry is kept as a record and is "
-                f"removed with the rest of the audit trail in "
-                f"{db.AUDIT_RETENTION_DAYS} days."
-            )
-            continue
-
+        # One case the query cannot filter out: the username may have been
+        # re-registered since the deletion, in which case restoring would collide
+        # with a live account. Name the cause rather than offering a button that
+        # is guaranteed to be refused.
         if db.username_exists(target):
-            # Name the cause. The old wording — "'X' is in use again, so this
-            # deletion cannot be restored" — was accurate but left an
-            # administrator who deleted an account a week ago with no way to
-            # connect it to a re-registration that happened since. It reads as
-            # a retention-window problem, which is the one thing it is not: the
-            # row is well inside the 5 days, and no amount of waiting will
-            # change the outcome. Spelling out that the name is taken again
-            # makes the caption self-explanatory and unblocks the decision
+            # The old wording was accurate but unhelpful — it reads as a
+            # retention-window problem, which is the one thing it is not: the row
+            # is well inside the window and no amount of waiting will change the
+            # outcome. Saying the name was taken again unblocks the decision
             # (rename the new account, or leave it).
             st.caption(
                 f"Cannot restore — '{target}' has been registered again since "
-                "this deletion. The audit entry itself is still inside the "
+                "this deletion, so putting it back would collide with that live "
+                "account. The entry itself is still inside the "
                 f"{db.AUDIT_RETENTION_DAYS}-day window."
             )
             continue
+
         if st_compat.button(
             f"Restore {target}", icon=":material/undo:",
             key=f"um_restore_{int(row['id'])}",
