@@ -1435,8 +1435,14 @@ def restore_user(audit_id: int, restored_by: str = "admin") -> tuple[bool, str]:
                     (
                         u_name, fb.get("category"), fb.get("student_level"), fb.get("rating"),
                         fb.get("comment"), fb.get("timestamp"), fb.get("additional_info", ""),
+                        # Restoring a deleted user re-inserts the rows exactly as
+                        # they were, sentiment included — that is the point of a
+                        # restore, and re-deriving them would rewrite history on
+                        # the way back in. The fallback below only applies to a row
+                        # that never recorded an engine at all; it names the engine
+                        # that will now read it, not the one it was written by.
                         fb.get("sentiment") or "Neutral", fb.get("sentiment_score", 0.0),
-                        fb.get("sentiment_engine") or "vader_academic_pro",
+                        fb.get("sentiment_engine") or sentiment.ENGINE_NAME,
                         fb.get("sentiment_confidence", 0.85),
                         fb.get("sentiment_cues", "{}"), fb.get("admin_corrected_sentiment"),
                         fb.get("corrected_by"), fb.get("corrected_at"),

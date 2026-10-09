@@ -224,7 +224,6 @@ SAFE_NAMES = {
     r"^n_fb$": "len() — an int",
     r"^n_corr$": "len() — an int",
     r"^n_samp$": "len(labeled) — an int, esc()'d at assignment",
-    r"^MIN_TRAINING_SAMPLES$": "a config.py int constant",
     r"^total_feedback$": "a get_session_stats() int",
     r"^avg_rating$": "a get_session_stats() float",
     r"^unique_students$": "a get_session_stats() int",
@@ -295,8 +294,7 @@ SAFE_NAMES = {
     r"^tag_html$": "targets.py: esc(t) per tag via _tags()",
     r"^feature_cards$": "login.py: a comprehension over the FEATURES literal list",
     r"^engine_label$": "full_dashboard.py: esc()'d or a literal in all 3 branches",
-    r"^lex_count$|^mwe_count$|^neg_count$|^intens_count$":
-        "sentiment.engine_status() ints, esc()'d at assignment",
+    
     r"^conf_range$": "sentiment.engine_status()['confidence_range'], esc()'d",
     r"^_thresholds$": "full_dashboard.py: sentiment.engine_status()"
                         "['rating_thresholds'], esc()'d at assignment",

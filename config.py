@@ -335,14 +335,18 @@ OTP_EXPIRY_MINUTES = 15
 OTP_MAX_ATTEMPTS = 5
 
 # ==================== SENTIMENT ENGINE ====================
-# Minimum number of admin-corrected labels required before train_model.py
-# will train (and the app will load) a local supervised classifier.
-# Below this threshold, the deterministic NLTK VADER lexicon analyzer is
-# used on its own — see sentiment.py for the full explanation.
-from pathlib import Path
-BASE_DIR = Path(__file__).resolve().parent
-MIN_TRAINING_SAMPLES = 40
-MODEL_PATH = str(BASE_DIR / "model" / "sentiment_classifier.pkl")
+# `MIN_TRAINING_SAMPLES`, `MODEL_PATH` and `BASE_DIR` used to sit here.
+# `MIN_TRAINING_SAMPLES` and `MODEL_PATH` named the local classifier that
+# `train_model.py` trained from free-text comments and loaded beside VADER; with
+# the comment box removed there is no training text, so a model trained on it
+# would be a model of nothing. `BASE_DIR` existed only to build `MODEL_PATH`, and
+# nothing else read it — confirmed by grep, including the suites.
+#
+# All three are removed rather than left at their old values, because a
+# threshold nobody reads is a threshold that will eventually be read. If a
+# supervised model is ever wanted again, `sentiment.analyze_sentiment` is the
+# only seam that has to change — the label, score and confidence it returns are
+# already the whole contract every caller depends on.
 
 # ==================== ACADEMIC SESSION ====================
 # Default academic session. Active default session is managed via

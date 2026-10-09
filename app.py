@@ -624,17 +624,23 @@ def _sidebar(user):
         st.markdown("</div>", unsafe_allow_html=True)
 
         # ── Sentiment Engine live indicator ──
+        # Was a "VADER Academic Pro / 220 rules / Domain-Specialized / Calibrated"
+        # badge. None of that described the rating-threshold engine, and the
+        # number was a hard-coded fallback rather than a count of anything —
+        # `engine_status()` reports 0 lexicon terms, so on the happy path this
+        # read "0 rules" and only claimed otherwise when the status call failed.
+        # The badge now states the rule that is actually applied.
         try:
             status = engine_status()
-            eng_label = status.get("active_engine", "VADER Academic Pro")
-            lex_count = status.get("domain_lexicon_terms", 220)
-            is_trained = status.get("trained_model_available", False)
+            eng_label = status.get("active_engine", "rating_threshold_engine")
+            bands = status.get("rating_thresholds", "1-2 Negative · 3 Neutral · 4-5 Positive")
+            engine_ok = not status.get("engine_problems")
         except Exception:
-            eng_label = "VADER Academic Pro"
-            lex_count = 220
-            is_trained = False
+            eng_label = "rating_threshold_engine"
+            bands = "1-2 Negative · 3 Neutral · 4-5 Positive"
+            engine_ok = False
 
-        engine_dot_color = "#10b981" if is_trained else "#3b82f6"
+        engine_dot_color = "#10b981" if engine_ok else "#f59e0b"
 
         st.markdown(
             f'<div class="sidebar-engine-badge">'
@@ -645,11 +651,10 @@ def _sidebar(user):
             f'</div>'
             f'<span style="font-size:.62rem;font-weight:700;padding:.1rem .45rem;border-radius:999px;'
             f'background:rgba(37,99,235,.08);color:#2563eb;border:1px solid rgba(37,99,235,.2);">'
-            f'{esc(lex_count)} rules</span>'
+            f'3 bands</span>'
             f'</div>'
-            f'<div style="font-size:.61rem;color:var(--text-3);margin-top:.35rem;display:flex;justify-content:space-between;">'
-            f'<span>Domain-Specialized</span>'
-            f'<span style="color:#059669;font-weight:600;">Calibrated</span>'
+            f'<div style="font-size:.61rem;color:var(--text-3);margin-top:.35rem;line-height:1.45;">'
+            f'{esc(bands)}'
             f'</div>'
             f'</div>',
             unsafe_allow_html=True,

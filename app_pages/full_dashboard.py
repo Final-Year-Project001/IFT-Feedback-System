@@ -66,11 +66,12 @@ def _render_engine_status_card(status: dict):
         engine_label = f"Degraded — {esc(status.get('engine_name', 'unavailable'))}"
         engine_icon_name = "alert-triangle"
 
-    # Metric values
-    lex_count = esc(status.get("domain_lexicon_terms", 0))
-    mwe_count = esc(status.get("mwe_rules_count", 0))
-    neg_count = esc(status.get("negation_tokens", 0))
-    intens_count = esc(status.get("intensifier_tokens", 0))
+    # `lex_count`, `mwe_count`, `neg_count` and `intens_count` used to be read
+    # here for a row of lexicon metrics. They are gone: `engine_status()` reports
+    # 0 for all four, so the row rendered four zeros, and the bands below them
+    # — the only figures an administrator can act on — were the ones that had
+    # been pushed off the card when the engine card was rewritten.
+    #
     # `esc` is not optional here and the fallback below deliberately keeps a
     # real default rather than the literal text "None": this value is
     # interpolated into `unsafe_allow_html`.

@@ -304,16 +304,6 @@ def engine_status() -> dict:
     return {
         "engine_name": ENGINE_NAME,
         "active_engine": ENGINE_NAME,
-        # Retained as keys so the admin status card and its self-test need no
-        # rewriting. Both now report the same truth: there is nothing external
-        # to be unavailable.
-        "vader_available": True,
-        "vader_removed": True,
-        "trained_model_available": False,
-        "trained_model_meta": None,
-        "trained_model_backend": None,
-        "nltk_import_error": None,
-        "free_text_removed": True,
         "rating_thresholds": (
             f"1-{NEGATIVE_MAX} Negative · {NEUTRAL} Neutral · "
             f"{POSITIVE_MIN}-5 Positive"
@@ -323,15 +313,11 @@ def engine_status() -> dict:
         "positive_min": POSITIVE_MIN,
         "confidence_range": f"{CONFIDENCE_FLOOR:.0%} – {CONFIDENCE_CEILING:.0%}",
         "confidence_tiers": [f"{name} ≥ {thr:.0%}" for thr, name in CONFIDENCE_TIERS],
-        "domain_lexicon_terms": 0,
-        "mwe_rules_count": 0,
-        "negation_tokens": 0,
-        "intensifier_tokens": 0,
-        # Always empty. Kept so the card can keep rendering the same way.
+        # Always empty, and kept as a key rather than removed: the admin card
+        # loops over it to render error pills, so an engine that cannot fail
+        # still has to have somewhere to say so. A rating engine has no install
+        # step, no corpus and no model file — there is nothing that can go
+        # missing between deployments, which is the whole reason it replaced
+        # the one that had three such failure modes.
         "engine_problems": [],
     }
-
-
-def invalidate_trained_model() -> bool:
-    """Retained so callers need no change. There is no model to invalidate."""
-    return False

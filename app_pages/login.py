@@ -35,7 +35,11 @@ from components import esc, html_alert, park_result_dialog
 
 FEATURES = [
     ("bar-chart", "rgba(59,130,246,.12)", "#2563eb", "Real-time Analytics", "Live dashboards, trend charts & sentiment analysis"),
-    ("sparkles", "rgba(139,92,246,.12)", "#7c3aed", "AI Sentiment Engine", "VADER Academic Pro · 220+ domain rules & calibrated confidence"),
+    # Was "VADER Academic Pro · 220+ domain rules & calibrated confidence", which
+    # described a lexicon analyser that no longer exists. The claim now made is
+    # the one that can be checked: the rating decides the band, and everyone
+    # sees the same band for the same rating.
+    ("chart-bar", "rgba(139,92,246,.12)", "#7c3aed", "Rating-Based Analysis", "Sentiment is derived from the 1&ndash;5 rating &mdash; one rule, the same for every submission"),
     ("target", "rgba(6,182,212,.12)", "#0891b2", "Decision Support", "Surfaces priority areas requiring departmental action"),
     ("shield-check", "rgba(16,185,129,.12)", "#059669", "Secure & Confidential", "All submissions are encrypted and anonymised"),
 ]
@@ -242,7 +246,7 @@ def _show_student_signin():
         st.markdown(
             '<div class="login-stats-bar">'
             f'<div class="login-stat-item"><div class="login-stat-value">{len(CATEGORIES)}</div><div class="login-stat-label">Categories</div></div>'
-            '<div class="login-stat-item"><div class="login-stat-value" style="color:#0891b2;">VADER+</div><div class="login-stat-label">Academic Pro</div></div>'
+            '<div class="login-stat-item"><div class="login-stat-value" style="color:#0891b2;">1&ndash;5</div><div class="login-stat-label">Rating Scale</div></div>'
             '<div class="login-stat-item"><div class="login-stat-value" style="color:#059669;">100%</div><div class="login-stat-label">Secure</div></div>'
             '<div class="login-stat-item"><div class="login-stat-value" style="color:#7c3aed;">Live</div><div class="login-stat-label">Analytics</div></div>'
             "</div>",
