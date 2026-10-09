@@ -21,6 +21,7 @@ a bug if it is not:
 
 Run: .venv\\Scripts\\python.exe test_undefined_names.py
 """
+import ast
 import builtins
 import io
 import os
@@ -47,7 +48,18 @@ BUILTINS = set(dir(builtins)) | {
 
 
 def collect_module_names(path):
-    """Module-level bindings: assignments, imports, defs, classes, globals."""
+    """Module-level bindings: assignments, imports, defs, classes, globals.
+
+    `symtable` alone is not enough for a `from x import (a, b, c)` written
+    across several lines. `sym.is_imported()` is False for every name in a
+    parenthesised `from` import, so a multi-line import of a perfectly ordinary
+    name reads as undefined — and adding the name to a second single-line import
+    "fixes" the report without fixing anything.
+
+    So the AST is consulted as well, and the two are unioned. Either alone has a
+    blind spot; together they cover plain and parenthesised imports, and a name
+    that really is undefined is still reported by neither.
+    """
     with open(path, encoding="utf-8") as fh:
         src = fh.read()
     top = symtable.symtable(src, os.path.basename(path), "exec")
@@ -55,6 +67,26 @@ def collect_module_names(path):
     for sym in top.get_symbols():
         if sym.is_assigned() or sym.is_imported() or sym.is_namespace():
             names.add(sym.get_name())
+
+    try:
+        tree = ast.parse(src, os.path.basename(path))
+    except SyntaxError:
+        return src, top, names
+
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                # A star import binds nothing we can name; skip it rather than
+                # recording a literal "*" that would mask a real miss.
+                if alias.name == "*":
+                    continue
+                names.add(alias.asname or alias.name)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+
     return src, top, names
 
 

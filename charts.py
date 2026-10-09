@@ -74,24 +74,83 @@ def make_sentiment_pie(df):
     return fig
 
 
-def make_trend_line(df):
+def make_trend_bar(df, title="Rating Trend Over Time"):
+    """Daily average rating, as bars.
+
+    Was a smoothed line. A continuous spline implies a reading between every
+    submission that nobody took — and on a few days with a single submission it
+    drew a confident curve through one data point, which is the kind of chart
+    that makes a dip look like a trend when it is one person's rating. Bars say
+    only what was actually recorded, and a gap in the bars is visibly a gap.
+
+    Days with no submissions are omitted rather than zero-filled: a zero bar
+    would read as "every student rated this 0", which is a different claim from
+    "nobody answered".
+    """
     if df.empty or "timestamp" not in df.columns:
         return None
     try:
         df2 = df.copy()
         df2["date"] = df2["timestamp"].dt.date
-        daily = df2.groupby("date")["rating"].mean().reset_index()
-        fig = go.Figure(go.Scatter(
-            x=daily["date"], y=daily["rating"].round(2), mode="lines+markers",
-            line=dict(color="#3b82f6", width=3, shape="spline"),
-            marker=dict(size=8, color="#8b5cf6", line=dict(width=2, color="#3b82f6")),
-            fill="tozeroy", fillcolor="rgba(59,130,246,0.06)",
-            hovertemplate="%{x}: <b>%{y:.2f}</b><extra></extra>",
-        ))
-        fig.update_layout(title="Rating Trend Over Time", yaxis_range=[0, 5.5], **PLOTLY_LAYOUT)
+        daily = df2.groupby("date").agg(
+            avg=("rating", "mean"), n=("rating", "size")
+        ).reset_index()
+        daily = daily[daily["n"] > 0].sort_values("date")
+
+        # Colour each bar by the band its average falls in, so the trend and the
+        # verdict are read in one glance and cannot be read two different ways.
+        #
+        # The bounds are the engine's own constants, read rather than repeated.
+        # Written out as literals they would look identical to a copy and stay
+        # that way until somebody moves a band in `sentiment.py` and this chart
+        # quietly colours the old bands forever.
+        from sentiment import NEGATIVE_MAX, NEUTRAL, POSITIVE_MIN
+
+        def band(value):
+            if value <= NEGATIVE_MAX:
+                return "#ef4444"
+            if value < POSITIVE_MIN:
+                return "#f59e0b"
+            return "#10b981"
+
+        colors = [band(v) for v in daily["avg"].round(2)]
+        try:
+            bar = go.Bar(
+                x=daily["date"], y=daily["avg"].round(2),
+                marker=dict(color=colors, line_width=0, cornerradius=6),
+                customdata=daily["n"],
+                hovertemplate="%{x}<br>Average <b>%{y:.2f}</b>/5"
+                              "<br>%{customdata} submission(s)<extra></extra>",
+            )
+        except (TypeError, ValueError):
+            # `cornerradius` needs plotly >= 5.19; on older builds Plotly raises
+            # rather than ignoring it, so fall back to square bars.
+            bar = go.Bar(
+                x=daily["date"], y=daily["avg"].round(2),
+                marker=dict(color=colors, line_width=0),
+                customdata=daily["n"],
+                hovertemplate="%{x}<br>Average <b>%{y:.2f}</b>/5"
+                              "<br>%{customdata} submission(s)<extra></extra>",
+            )
+        fig = go.Figure(bar)
+        fig.update_layout(
+            title=title, yaxis_range=[0, 5.5],
+            bargap=0.25,
+            **PLOTLY_LAYOUT,
+        )
         return fig
     except Exception:
         return None
+
+
+def make_trend_line(df):
+    """Retained name for the old chart. Now draws the same bars.
+
+    Kept so any caller still importing this name keeps working; it is an alias
+    rather than a second implementation, because two charts that were meant to
+    show the same thing is how the line and bar versions would drift.
+    """
+    return make_trend_bar(df)
 
 
 def make_category_radar(df):

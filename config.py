@@ -358,6 +358,209 @@ CURRENT_SESSION = "2025/2026"
 # session or bookmark keeps working, but nothing new is ever generated from one.
 ALL_SESSIONS_LABEL = "All Sessions (Aggregate)"
 
+# ==================== IFT TEACHING STAFF ====================
+# Source: FUTO Department of Information Technology Student Handbook &
+# Information Guide, §5.0 "List of Staff Members", §5.1 "Teaching Staff",
+# items 1-25.
+#
+# TRANSCRIBED FROM THE HANDBOOK BY HAND.
+#
+# `Department Handbook.PDF` is a CamScanner scan with no text layer — the whole
+# 27-page document yields 621 extractable characters, all of them the
+# "Scanned with CamScanner" watermark. So these names were read off the rendered
+# pages (4 and 5) at high resolution rather than parsed, and they are therefore
+# a *transcription*: check them against the handbook before a defence or before
+# the department is graded on them. The surname is the part that matters here,
+# because it is what a student types and what the administrative breakdowns
+# group on, so `name` carries the title and initials and `key` is the bare
+# surname.
+#
+# One lecturer can teach across several levels and courses, which is why these
+# names are deliberately NOT scoped to a level: a 200-level and a 400-level
+# student may both be rating the same person, and the teaching-style breakdown
+# aggregates them together deliberately (see `db.lecturer_teaching_summary`).
+#
+# `key` is the canonical form used for grouping. Normalised to lower case with
+# the title and initials stripped, so "Dr. A. I. Otuonye", "Otuonye" and
+# "DR. A.I. OTUONYE" all resolve to the same row no matter how a student picked
+# it from the dropdown or what an older free-text submission recorded.
+TEACHING_STAFF: list[dict] = [
+    {"n": 1,  "name": "Prof. Mrs. U. F. Eze",        "key": "eze",        "rank": "Professor",        "field": "Database Technology"},
+    {"n": 2,  "name": "Dr. A. I. Otuonye",           "key": "otuonye",     "rank": "Reader",           "field": "Software Engineering"},
+    {"n": 3,  "name": "Engr. Dr. O. C. Nwokonkwo",   "key": "nwokonkwo",   "rank": "Senior Lecturer",  "field": "Project Management"},
+    {"n": 4,  "name": "Dr. C. Etus",                  "key": "etus",        "rank": "Senior Lecturer",  "field": "Electrical / Computer Engineering"},
+    {"n": 5,  "name": "Engr. Dr. E. C. Amadi",       "key": "amadi",       "rank": "Senior Lecturer",  "field": "Electrical Engineering"},
+    {"n": 6,  "name": "Dr. N. Ekedebe",               "key": "ekedebe",     "rank": "Senior Lecturer",  "field": "Communication Engineering"},
+    {"n": 7,  "name": "Mr. I. A. Udunwa",             "key": "udunwa",      "rank": "Lecturer I",       "field": "Project Management / Information Systems"},
+    {"n": 8,  "name": "Engr. I. U. Ajere",            "key": "ajere",       "rank": "Lecturer I",       "field": "Telecoms Engineering (Network)"},
+    {"n": 9,  "name": "Engr. Dr. (Mrs.) G. N. Eze",  "key": "eze",         "rank": "Lecturer I",       "field": "Electrical Engineering / IT"},
+    {"n": 10, "name": "Dr. A. M. John-Otumu",         "key": "john-otumu",  "rank": "Lecturer I",       "field": "Computer Science"},
+    {"n": 11, "name": "Engr. Dr. Emeka M. Nwanga",    "key": "nwanga",      "rank": "Lecturer I",       "field": "Electrical Engineering"},
+    {"n": 12, "name": "Dr. (Mrs.) N. Esomonyu",       "key": "esomonyu",    "rank": "Lecturer II",      "field": "Mathematics / Applied Mathematics"},
+    {"n": 13, "name": "Dr. O. T. Okonkwo",            "key": "okonkwo",     "rank": "Lecturer II",      "field": "Computer Science"},
+    {"n": 14, "name": "Dr. (Mrs.) C. V. Mbamalu",     "key": "mbamalu",     "rank": "Lecturer II",      "field": "Computer Science"},
+    {"n": 15, "name": "Dr. (Mrs.) Chika. N. John",   "key": "john",        "rank": "Lecturer II",      "field": "Mathematics / Information Management"},
+    {"n": 16, "name": "Mr. C. S. Nwanjah",            "key": "nwanjah",     "rank": "Lecturer II",      "field": "Cyber Security / Software Engineering"},
+    {"n": 17, "name": "Engr. I. H. Ajunwa",           "key": "ajunwa",      "rank": "Lecturer II",      "field": "Electrical Engineering / Information Management"},
+    {"n": 18, "name": "Mr. N. D. Asimobi",            "key": "asimobi",     "rank": "Lecturer II",      "field": "Electrical Engineering / Information Management"},
+    {"n": 19, "name": "Mrs. J. Jibiri",               "key": "jibiri",      "rank": "Lecturer II",      "field": "Computer Science / Information Management"},
+    {"n": 20, "name": "Mr. V. C. Nwachukwu",          "key": "nwachukwu",   "rank": "Assistant Lecturer", "field": "Information Management Technology"},
+    {"n": 21, "name": "Mr. C. Ohanuma",               "key": "ohanuma",     "rank": "Assistant Lecturer", "field": "Computer Science"},
+    {"n": 22, "name": "Mr. E. C. Chukwu",             "key": "chukwu",      "rank": "Assistant Lecturer", "field": "Computer Science"},
+    {"n": 23, "name": "Mr. C. Okpani",                "key": "okpani",      "rank": "Assistant Lecturer", "field": "Computer Engineering / IT"},
+    {"n": 24, "name": "Mr. Emmanuel Ubalatu",        "key": "ubalatu",     "rank": "Assistant Lecturer", "field": "Communication Engineering"},
+    {"n": 25, "name": "Mrs. Adaeobi Onwuachu",       "key": "onwuachu",    "rank": "Assistant Lecturer", "field": "Electrical / Computer Engineering"},
+]
+
+# The placeholder the student sees first. Kept out of the name list so it can
+# never be stored as a lecturer by accident.
+LECTURER_PLACEHOLDER = "Select a lecturer…"
+
+# The dropdown options, in handbook order. Sorting alphabetically would hide the
+# seniority order the handbook itself uses, and that order is the one an
+# examiner checking the handbook against the screen will look for.
+LECTURER_OPTIONS: list[str] = [LECTURER_PLACEHOLDER] + [s["name"] for s in TEACHING_STAFF]
+
+# surname -> display name, for grouping the administrative breakdowns and for
+# resolving what an older free-text submission typed in. Two staff share a
+# surname ("Eze" appears at items 1 and 9); the entry keeps both names so the
+# dashboard can show which one, and `TEACHING_STAFF_BY_KEY` is keyed by the
+# ordinal as well so a bare surname is never silently attributed to the wrong
+# person.
+TEACHING_STAFF_BY_KEY: dict[str, list[dict]] = {}
+for _s in TEACHING_STAFF:
+    TEACHING_STAFF_BY_KEY.setdefault(_s["key"], []).append(_s)
+
+
+def lecturer_display_for(key: str) -> str:
+    """Human label for a grouping key.
+
+    Understands the `surname|initials` form `lecturer_group_key` produces, so
+    the two EzEs render as their own names rather than as one merged row. A key
+    of `surname|?` is one nobody could be identified from, and says so rather
+    than being quietly attributed to one of them.
+    """
+    raw = (key or "").strip().lower()
+    if not raw:
+        return "Unspecified"
+
+    surname, _, initials = raw.partition("|")
+    if not initials:
+        people = TEACHING_STAFF_BY_KEY.get(surname, [])
+        if not people:
+            return raw
+        if len(people) == 1:
+            return people[0]["name"]
+        return " / ".join(p["name"] for p in people)
+
+    for person in TEACHING_STAFF_BY_KEY.get(surname, []):
+        if _initials_of(person["name"]) == initials:
+            return person["name"]
+    if initials == "?":
+        others = TEACHING_STAFF_BY_KEY.get(surname, [])
+        if len(others) == 1:
+            return others[0]["name"]
+        return " or ".join(p["name"] for p in others) + " (not identified)"
+    return raw
+
+
+# Titles stripped before matching, so "Dr. A. I. Otuonye" and "Otuonye" are
+# the same person. Ordered longest-first so "Dr." is removed before a bare "Dr"
+# would be tried, and applied case-insensitively.
+_LECTURER_TITLES = (
+    "prof", "professor", "engr", "engnr", "engineer", "mr", "mrs", "ms", "miss",
+    "dr", "rev", "sir", "mme", "madam",
+)
+
+
+def _surname_of(name: str) -> str:
+    import re
+
+    raw = str(name or "").strip().lower()
+    if not raw:
+        return ""
+    # Drop any parenthetical, e.g. "Dr. (Mrs.) N. Esomonyu" -> "n. esomonyu".
+    raw = re.sub(r"\([^)]*\)", " ", raw)
+    # Drop trailing rank text some students append.
+    raw = re.sub(r"\b(lecturer|senior|assistant|professor)\b", " ", raw)
+    words = [w for w in re.split(r"[^a-z'-]+", raw) if w]
+    words = [w for w in words if w not in _LECTURER_TITLES]
+    if not words:
+        return ""
+    # A single-letter token is an initial, not a surname.
+    words = [w for w in words if len(w) > 1 or w in ("n",)]
+    return words[-1] if words else ""
+
+
+def normalize_lecturer(name: str) -> str:
+    """Reduce a lecturer name to its grouping key.
+
+    Strips every title token, the initials, and any parenthetical, then keeps
+    the last remaining word. That is the surname in every naming style in the
+    handbook, including the hyphenated "John-Otumu" and "G. N. Eze" forms.
+
+    Returns "" for anything that carries no usable name, so a caller can tell
+    "no lecturer chosen" from "a lecturer called X".
+
+    NOTE: this is the *surname* key and it is ambiguous by design for the one
+    surname the handbook lists twice ("Eze", items 1 and 9). Anything that
+    attributes feedback to a person must use `lecturer_group_key`, which
+    resolves that collision.
+    """
+    return _surname_of(name)
+
+
+def _initials_of(name: str) -> str:
+    """The initials in a name, concatenated and lower case: "U. F. Eze" -> "ufe"."""
+    import re
+
+    raw = str(name or "").strip().lower()
+    raw = re.sub(r"\([^)]*\)", " ", raw)
+    tokens = [w for w in re.split(r"[^a-z]+", raw) if w]
+    return "".join(t[0] for t in tokens if t and t not in _LECTURER_TITLES)
+
+
+def lecturer_group_key(name: str) -> str:
+    """The key feedback is grouped on when attributing it to a person.
+
+    The surname alone is not enough: the handbook lists two EzEs (items 1 and 9),
+    and merging their feedback would tell an administrator that one person was
+    flagged for something the other was praised for. So where a surname is held
+    by more than one member of staff, the initials are folded into the key and
+    the two stay apart:
+
+        "Prof. Mrs. U. F. Eze"       -> "eze|ufe"
+        "Engr. Dr. (Mrs.) G. N. Eze" -> "eze|gne"
+        "Eze"  (typed by hand)       -> "eze|?"  — grouped separately and
+                                        labelled ambiguous, because nothing in
+                                        the name says which one it was and
+                                        guessing would misattribute it.
+    """
+    surname = _surname_of(name)
+    if not surname:
+        return ""
+    candidates = TEACHING_STAFF_BY_KEY.get(surname, [])
+    if len(candidates) <= 1:
+        return surname
+    initials = _initials_of(name)
+    if initials:
+        for person in candidates:
+            if _initials_of(person["name"]) == initials:
+                return f"{surname}|{initials}"
+    # A bare surname for a name the handbook lists twice. Kept as its own key
+    # rather than merged into either person.
+    return f"{surname}|?"
+
+
+def is_known_lecturer(name: str) -> bool:
+    """True when the name matches someone on the handbook's teaching-staff list.
+
+    Used to separate "flagged from the dropdown" from "typed in by hand", so an
+    administrator can see which rows are keyed to a real person.
+    """
+    return normalize_lecturer(name) in TEACHING_STAFF_BY_KEY
+
+
 # ==================== PLOTLY THEME ====================
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",

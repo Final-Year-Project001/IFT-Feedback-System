@@ -50,6 +50,18 @@ CASES = {
         "from config import ALL_SESSIONS_LABEL\n\n\ndef f():\n"
         "    return ALL_SESSIONS_LABEL\n"
     ),
+    # The same, written as a PARENTHESISED multi-line import. `symtable` does
+    # not mark these names as imported, so the checker needed an AST pass to
+    # see them at all — and that blind spot is invisible until a real page
+    # imports something that way and gets reported as undefined.
+    "imported_multiline.py": (
+        "from config import (\n    ALL_SESSIONS_LABEL,\n    CURRENT_SESSION,\n)\n"
+        "\n\ndef f():\n    return ALL_SESSIONS_LABEL + CURRENT_SESSION\n"
+    ),
+    # And with an alias, which is a third spelling of the same import.
+    "imported_alias.py": (
+        "from config import CAT_META as META\n\n\ndef f():\n    return META\n"
+    ),
     # A closure variable (bound in the enclosing function) must not be flagged.
     "closure.py": (
         "def outer(a):\n    total = 0\n\n    def inner(b):\n"
@@ -64,6 +76,8 @@ EXPECT = {
     "inclass.py": "OTHER_NAME",
     "declared.py": None,
     "imported.py": None,
+    "imported_multiline.py": None,
+    "imported_alias.py": None,
     "closure.py": None,
 }
 

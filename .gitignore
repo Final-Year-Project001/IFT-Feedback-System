@@ -39,7 +39,18 @@ tests/_last_run.txt
 # inside the repository, which is not something to deploy: it would ship a
 # second, out-of-date copy of every module, and the suites that walk the tree
 # would report findings in a file that never runs.
+#
+# Seven suites carry `.kilo` in their skip lists because of this. That skip is
+# the reason a stale duplicate can sit here without any suite failing, which is
+# exactly why it must not be committed: an untracked directory is invisible in
+# review, and this one is a whole second copy of the application.
 .kilo/
+
+# The department handbook. 15 MB, a CamScanner scan, and nothing in the app
+# reads it at runtime — the teaching-staff list in `config.py` was transcribed
+# from it by hand and committed. Committing it would add a megabyte-scale binary
+# to every clone to serve no code.
+Department Handbook.PDF
 
 # One-shot local dev artefacts: run-all transcripts and the Streamlit boot log.
 _streamlit.log

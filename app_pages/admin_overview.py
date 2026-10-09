@@ -7,6 +7,7 @@ import st_compat
 from config import CATEGORIES, CAT_META, ALL_SESSIONS_LABEL
 from db import load_data
 from charts import make_rating_bar, make_category_radar
+from app_pages.targets import chart_card
 from components import html_metric, page_header, section_header, empty_state, html_alert
 from icons import i, sentiment_icon, sentiment_color
 
@@ -80,15 +81,11 @@ def show_admin_overview(session: str | None = None):
     section_header("trending-up", "Quick Charts")
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("bar-chart", 13)} Rating Distribution</div>', unsafe_allow_html=True)
-        fig = make_rating_bar(df, "Overall Ratings")
-        if fig: st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("Rating Distribution", "bar-chart", make_rating_bar(df, ""),
+                   caption="How many submissions gave each star rating.")
     with c2:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("radar", 13)} Category Radar</div>', unsafe_allow_html=True)
-        fig = make_category_radar(df)
-        if fig: st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("Category Overview", "radar", make_category_radar(df),
+                   caption="Average rating per category, on the same 1-5 scale.")
 
     html_alert(
         "<strong>Advisory:</strong> Consult the <strong>Full Dashboard</strong> for granular analytics and "

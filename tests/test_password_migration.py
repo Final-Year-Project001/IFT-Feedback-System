@@ -116,7 +116,21 @@ def signed_in_at(**extra):
 
 
 def body_text(at):
-    parts = [m.value for m in at.markdown]
+    """Everything the page actually renders, minus the injected stylesheet.
+
+    The `<style>` blocks are excluded on purpose. `body_text` is used to assert
+    that a given admin screen did *not* render, by looking for its navigation
+    label — and the global stylesheet is present on every page, including the
+    held screen. A CSS comment that happens to name a page therefore reads as
+    that page having rendered.
+
+    That is not hypothetical: adding one line to `styles.py` mentioning
+    "Decision Insights" made this suite fail with the dashboard nowhere in
+    sight. A stylesheet is document furniture, not rendered content, so it is
+    filtered out here and the navigation checks mean what they say.
+    """
+    parts = [m.value for m in at.markdown
+             if not str(m.value).lstrip().startswith("<style")]
     parts += [e.value for e in at.error]
     parts += [w.value for w in at.warning]
     parts += [s.value for s in at.success]

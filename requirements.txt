@@ -9,7 +9,6 @@
 #      python -m venv .venv
 #      .venv\Scripts\python -m pip install -r requirements.txt     (Windows)
 #      .venv/bin/python -m pip install -r requirements.txt         (macOS/Linux)
-#      .venv\Scripts\python download_nltk_data.py
 #
 #  Every lower bound below is the version at which a specific line of code in
 #  this repository starts working — not a guess. Every upper bound exists
@@ -53,16 +52,25 @@ pandas>=2.0.0,<4.0.0
 # dict, convert it to a `go.Figure` first.
 plotly>=5.19.0,<8.0.0
 
-# Tokenisation helpers for the domain lexicon (used by `sentiment.py` and by
-# `download_nltk_data.py`). 3.8 is the floor. Verified against 3.10.3.
-nltk>=3.8.1,<4.0.0
-
-# Optional. Only needed to *train* a classifier (`train_model.py`) and to read
-# one back — `sentiment.py` imports it lazily and degrades to the rule engine
-# with a visible warning in `engine_problems` if it is missing or the model
-# cannot be loaded. The app is fully functional without it; there is simply no
-# trained model, so every label comes from the rule pipeline.
-scikit-learn>=1.3.0,<2.0.0
+# ─────────────────────────────────────────────────────────────────────────────
+#  REMOVED
+#
+#  nltk  — was used for VADER's sentiment analyser. VADER is gone: it judged
+#          academic prose with a general-purpose English lexicon and disagreed
+#          with the rating the student had given, which is what
+#          `tests/test_rating_engine.py` now guards against. Sentiment is
+#          three integer comparisons in `sentiment.py`, which imports only the
+#          standard library.
+#
+#  scikit-learn — was used by `train_model.py` to learn a text classifier from
+#          administrator corrections. Both are gone: the free-text comment box
+#          has been removed, so a correction is no longer a labelled sentence.
+#          Nothing in the app imports sklearn any more, and the import is not
+#          paid on every page render.
+#
+#  Nothing needs `download_nltk_data.py` any more either — there is no corpus
+#  to fetch. Nothing at install time downloads data.
+# ─────────────────────────────────────────────────────────────────────────────
 
 # The PostgreSQL driver. Only imported when `FUTO_POSTGRES_URL` is set — see
 # `db_backend.py` — so this is inert for a SQLite deployment and the app runs

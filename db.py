@@ -16,6 +16,7 @@ Tables:
 
 from __future__ import annotations
 
+from collections import Counter
 import hashlib
 import hmac
 import json
@@ -28,11 +29,18 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 
+import sentiment
+
 from config import (
     CURRENT_SESSION,
     ALL_SESSIONS_LABEL,
     ADMIN_SEED_ACCOUNTS,
     SEED_ADMINS_ON_STARTUP,
+    # Per-lecturer rollups group on these, and one handbook surname is held by
+    # two members of staff — see `lecturer_group_key`.
+    lecturer_group_key,
+    lecturer_display_for,
+    is_known_lecturer,
 )
 
 # Optional durability layer. `storage` is a no-op unless a backup repository and
@@ -1565,8 +1573,21 @@ def cleanup_orphaned_feedback() -> int:
 # ══════════════════════════════════════════════════════════════
 
 def save_data(category: str, d: dict) -> tuple[bool, str]:
-    """Insert one feedback row. Returns (ok: bool, message: str)."""
+    """Insert one feedback row. Returns (ok: bool, message: str).
+
+    The sentiment columns are written from the rating, not from the caller.
+    `save_data` used to take the label the page had computed and store it
+    verbatim, which meant the row's sentiment and the row's rating could
+    disagree — the exact contradiction the rating engine exists to remove.
+    Deriving it here rather than in the form means there is no caller that can
+    get it wrong, including a future one.
+
+    `comment` is still a column so historical rows stay readable, but it is
+    written empty: the free-text box has been removed from the forms.
+    """
     conn = get_db()
+    rating = sentiment.normalize_rating(d.get("rating"))
+    label = sentiment.label_from_rating(rating) or "Neutral"
     try:
         conn.execute(
             """INSERT INTO feedback
@@ -1575,12 +1596,13 @@ def save_data(category: str, d: dict) -> tuple[bool, str]:
                 sentiment_confidence, sentiment_cues, context_data, session)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                d["username"], category, d["student_level"], d["rating"],
-                d["comment"], d["timestamp"], d.get("additional_info", ""),
-                d.get("sentiment", "Neutral"), d.get("sentiment_score", 0.0),
-                d.get("sentiment_engine", "vader"),
-                d.get("sentiment_confidence", 0.85),
-                json.dumps(d.get("sentiment_cues", {})) if isinstance(d.get("sentiment_cues"), (dict, list)) else str(d.get("sentiment_cues", "{}")),
+                d["username"], category, d["student_level"], rating,
+                d.get("comment", ""), d["timestamp"], d.get("additional_info", ""),
+                label,
+                sentiment.rating_to_score(rating),
+                sentiment.ENGINE_NAME,
+                sentiment.rating_confidence(rating),
+                "{}",
                 json.dumps(d.get("context_data", {})),
                 d.get("session", CURRENT_SESSION),
             ),
@@ -1848,7 +1870,25 @@ def load_data(category: str | None = None, session: str | None = None) -> pd.Dat
     df = pd.read_sql_query(query, conn, params=tuple(params) if params else None)
     if not df.empty and "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    if not df.empty and "rating" in df.columns:
+        # Re-apply the rating rule to rows that are already on disk.
+        #
+        # The stored `sentiment` column predates the rating engine: it was
+        # written by VADER from the free-text comment, so historical rows can
+        # carry a verdict that contradicts their own rating — the exact
+        # "4 stars, Negative sentiment" display this replaced. Rather than a
+        # migration that rewrites rows and loses the record of what the old
+        # engine said, the authoritative label is derived here, at read time,
+        # for every row old and new alike.
+        df["rating"] = df["rating"].apply(sentiment.normalize_rating)
+        df["text_sentiment"] = df["sentiment"]          # preserved, not used
+        df["sentiment"] = df["rating"].map(sentiment.label_from_rating).fillna("Neutral")
+        df["sentiment_score"] = df["rating"].map(sentiment.rating_to_score)
+        df["sentiment_engine"] = sentiment.ENGINE_NAME
     if not df.empty and "admin_corrected_sentiment" in df.columns:
+        # An administrator's manual correction outranks the automatic label —
+        # it is the one case where a human has deliberately overridden the
+        # scale, and silently discarding it would throw away that decision.
         df["effective_sentiment"] = df["admin_corrected_sentiment"].fillna(df["sentiment"])
     return df
 
@@ -1939,3 +1979,198 @@ def context_text_list(value, limit: int | None = None) -> list[str]:
         if limit and len(out) >= limit:
             break
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  PER-TARGET ROLLUPS
+#
+#  Three administrative questions the category-wide counters cannot answer:
+#
+#    * which lecturer should be spoken to, and about what   (all levels)
+#    * which course in which level needs reworking           (by level)
+#    * what infrastructure should be repaired first          (all levels)
+#
+#  They live here rather than on the pages so that what the dashboard shows and
+#  what a CSV export contains come from one implementation — the two were
+#  previously written separately and disagreed.
+#
+#  Every one of them reads `context_data`, which is a free-form JSON column, so
+#  each goes through `context_text_list`. That is not defensive decoration: a
+#  nested list in that blob is unhashable, and handing one to `Counter` raises
+#  TypeError and takes the whole page down.
+# ══════════════════════════════════════════════════════════════════════
+
+_CTX_CHALLENGES_KEY = "challenges"
+_CTX_METHODS_KEY = "effective_methods"
+_CTX_EMPHASIS_KEY = "emphasis_areas"
+_CTX_FACILITIES_KEY = "facilities_flagged"
+_CTX_URGENCY_KEY = "urgency"
+
+
+def lecturer_summary(session: str | None = None, top_n: int = 3) -> list[dict]:
+    """Every lecturer rated, with the challenges flagged against them.
+
+    Deliberately NOT split by level. One member of staff can be rated by a
+    200-level and a 400-level student for different courses, and the question
+    an administrator is answering — "who do I speak to, about what" — is about
+    the person, not about each cohort separately. Splitting it would hide a
+    pattern that only becomes visible once the cohorts are combined.
+
+    `responses` counts students, not flags: a student who ticks three
+    challenges for one lecturer is still one response, and that count is what
+    says how much evidence a pattern rests on.
+
+    Grouping is on `lecturer_group_key`, not the raw name, so "Dr. A. I.
+    Otuonye" and a bare "Otuonye" are one person — and, because the handbook
+    lists two EzEs, the initials are part of that key. Merging them would tell
+    an administrator one person was praised for something the other was
+    flagged for.
+    """
+    df = load_data("Lecturer Teaching Style", session=session)
+    if df.empty:
+        return []
+
+    by_key: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        ctx = parse_context(row.get("context_data"))
+        raw_name = str(ctx.get("lecturer_name") or "").strip()
+        key = lecturer_group_key(raw_name) or "unspecified"
+        entry = by_key.setdefault(key, {
+            "key": key,
+            "name": raw_name or "Not identified",
+            "display": ("Not identified" if key == "unspecified"
+                        else lecturer_display_for(key)),
+            "known": bool(raw_name) and is_known_lecturer(raw_name),
+            "_ratings": [],
+            "_levels": set(),
+            "_challenges": Counter(),
+            "_methods": Counter(),
+            "_students": set(),
+        })
+        try:
+            entry["_ratings"].append(float(row.get("rating")))
+        except (TypeError, ValueError):
+            pass
+        level = str(row.get("student_level") or "").strip()
+        if level:
+            entry["_levels"].add(level)
+        username = str(row.get("username") or "").strip()
+        if username:
+            entry["_students"].add(username.lower())
+        entry["_challenges"].update(context_text_list(ctx.get(_CTX_CHALLENGES_KEY), limit=40))
+        entry["_methods"].update(context_text_list(ctx.get(_CTX_METHODS_KEY), limit=40))
+
+    out = []
+    for entry in by_key.values():
+        ratings = entry.pop("_ratings")
+        entry["levels"] = sorted(entry.pop("_levels"))
+        entry["responses"] = len(entry.pop("_students"))
+        entry["avg_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0.0
+        entry["top_challenges"] = entry.pop("_challenges").most_common(top_n)
+        entry["top_methods"] = entry.pop("_methods").most_common(top_n)
+        out.append(entry)
+
+    # Worst average first: the point of the table is who needs attention.
+    out.sort(key=lambda r: (r["avg_rating"], -r["responses"]))
+    return out
+
+
+def course_summary(session: str | None = None, top_n: int = 3) -> list[dict]:
+    """The most-mentioned courses per level, with the emphasis areas asked for.
+
+    Grouped by level as well as by course, because a 200-level course and a
+    500-level one are different questions: the handbook schedules them
+    differently, they draw on different staff, and "this course needs
+    reworking" is not actionable if it averages a 300-level and a 500-level
+    result together.
+    """
+    df = load_data("Course Content", session=session)
+    if df.empty:
+        return []
+
+    grouped: dict[tuple, dict] = {}
+    for _, row in df.iterrows():
+        ctx = parse_context(row.get("context_data"))
+        course = str(ctx.get("course_rated") or "").strip()
+        if not course:
+            continue
+        level = str(row.get("student_level") or "").strip() or "Unspecified"
+        entry = grouped.setdefault((level, course), {
+            "level": level,
+            "course": course,
+            "_ratings": [],
+            "_emphasis": Counter(),
+            "_students": set(),
+        })
+        try:
+            entry["_ratings"].append(float(row.get("rating")))
+        except (TypeError, ValueError):
+            pass
+        entry["_emphasis"].update(context_text_list(ctx.get(_CTX_EMPHASIS_KEY), limit=40))
+        username = str(row.get("username") or "").strip()
+        if username:
+            entry["_students"].add(username.lower())
+
+    by_level: dict[str, list] = {}
+    for (level, course), entry in grouped.items():
+        ratings = entry.pop("_ratings")
+        entry["responses"] = len(entry.pop("_students"))
+        entry["avg_rating"] = round(sum(ratings) / len(ratings), 2) if ratings else 0.0
+        entry["emphasis_areas"] = entry.pop("_emphasis").most_common(top_n)
+        by_level.setdefault(level, []).append(entry)
+
+    out = []
+    for level, rows in by_level.items():
+        # Most-mentioned first: a course two students rated badly is a stronger
+        # signal than one a single student rated badly.
+        rows.sort(key=lambda r: (-r["responses"], r["avg_rating"]))
+        out.extend(rows[:top_n])
+    return out
+
+
+def facility_summary(session: str | None = None, top_n: int = 5) -> list[dict]:
+    """The most-reported infrastructure items, across every level.
+
+    Not split by level: a dead projector or an unstable supply affects all
+    cohorts at once, and the repair decision is a single departmental one.
+    """
+    df = load_data("Facilities", session=session)
+    if df.empty:
+        return []
+
+    items: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        ctx = parse_context(row.get("context_data"))
+        for item in context_text_list(ctx.get(_CTX_FACILITIES_KEY), limit=40):
+            entry = items.setdefault(item, {
+                "facility": item,
+                "reports": 0,
+                "_levels": set(),
+                "_urgency": Counter(),
+                "_locations": Counter(),
+            })
+            entry["reports"] += 1
+            level = str(row.get("student_level") or "").strip()
+            if level:
+                entry["_levels"].add(level)
+            urgency = str(ctx.get(_CTX_URGENCY_KEY) or "").strip()
+            if urgency:
+                entry["_urgency"][urgency] += 1
+            location = str(ctx.get("location") or "").strip()
+            if location:
+                entry["_locations"][location] += 1
+
+    out = []
+    for entry in items.values():
+        entry["levels"] = sorted(entry.pop("_levels"))
+        # A dict, not most_common()'s list of pairs. Every other breakdown on
+        # these pages counts into a Counter and hands back a list, and a caller
+        # that then does `counts.get(...)` gets AttributeError — which is how
+        # this very check first failed against the list version. One shape for
+        # "how many said X" is worth more here than matching the neighbours.
+        entry["urgency_counts"] = dict(entry.pop("_urgency").most_common())
+        entry["top_locations"] = entry.pop("_locations").most_common(3)
+        out.append(entry)
+
+    out.sort(key=lambda r: (-r["reports"], r["facility"]))
+    return out[:top_n]

@@ -8,6 +8,7 @@ import st_compat
 from config import CATEGORIES, CAT_META
 from db import load_data, parse_context, filter_by_username
 from charts import make_rating_bar, make_sentiment_pie
+from app_pages.targets import chart_card
 from sentiment import confidence_tier
 from components import html_metric, page_header, section_header, progress_bar, empty_state, esc
 from icons import i, sentiment_icon, sentiment_color
@@ -151,17 +152,11 @@ def show_basic_stats(username, session: str | None = None):
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("bar-chart", 13)} Rating Distribution</div>', unsafe_allow_html=True)
-        fig = make_rating_bar(mine, "My Rating Distribution")
-        if fig:
-            st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("My Rating Distribution", "bar-chart", make_rating_bar(mine, ""),
+                   caption="How your own submissions were rated.")
     with c2:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("smile", 13)} Sentiment Breakdown</div>', unsafe_allow_html=True)
-        fig = make_sentiment_pie(mine)
-        if fig:
-            st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("My Sentiment Breakdown", "smile", make_sentiment_pie(mine),
+                   caption="Your submissions by band. The band follows your rating.")
 
     section_header("folder-open", "Submission History")
     # The header used to be opened inside a `<div class="data-table-wrap">` and

@@ -33,6 +33,7 @@ import db  # noqa: E402
 db.DB_PATH = COPY
 db.get_db.clear()
 
+import sentiment  # noqa: E402
 import config  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
@@ -100,28 +101,35 @@ check("the submission form is shown first",
 check("no confirmation card yet",
       not any("Submission Confirmed" in (m.value or "") for m in at.markdown))
 
-# An empty comment must be refused, and must not clear the form.
+# There is no comment box any more — the free-text field was removed along with
+# VADER, because a prose opinion and a 1-5 rating are two answers to one question
+# and the rating is the comparable one. So there is no longer a comment to leave
+# empty, and submitting on the default slider is a *valid* submission. What is
+# still refused is a Lecturer Teaching Style form with no lecturer chosen, which
+# is covered at the end of this file.
+#
+# The rest of this block is unchanged in intent: a submission on the default
+# rating must not crash, and the row it writes must be real.
 by_label(at.button, "Submit Feedback →").click().run()
 ex = exceptions_of(at)
-check("an empty submission does not crash", not ex, ex)
+check("a submission does not crash", not ex, ex)
 body = " ".join((m.value or "") for m in at.markdown)
-check("an empty comment is refused with an explanation",
-      "required" in body.lower(), body[:0])
-# `load_data` returns every student's rows for the category — DeAnalyst already
-# has one — so the fixture student is what must be absent, not the frame.
-_pre_empty = db.load_data(category=CATEGORY, session=SESSION)
-check("no row was written for the empty attempt",
-      "SubmitProbe" not in set(_pre_empty["username"]),
-      list(_pre_empty["username"]))
-
-# Now a real submission.
-at.text_area[0].set_value(
-    "The projector in hall B is broken and the lab network keeps dropping during lectures. "
-    "The lecturer is helpful but the slides arrive too late."
-)
-by_label(at.button, "Submit Feedback →").click().run()
-ex = exceptions_of(at)
-check("a real submission does not crash", not ex, ex)
+check("the confirmation card is shown", "Submission Confirmed" in body, body[:200])
+check("no comment box is offered any more",
+      not at.text_area, [t.label for t in at.text_area])
+_pre_submit = db.load_data(category=CATEGORY, session=SESSION)
+check("the row was written", "SubmitProbe" in set(_pre_submit["username"]),
+      list(_pre_submit["username"]))
+check("...with the comment column left empty",
+      all(not str(c or "").strip() for c in _pre_submit["comment"]),
+      list(_pre_submit["comment"]))
+check("...and its sentiment is the rating's own band, not a text reading",
+      set(_pre_submit["sentiment"]) <= {"Positive", "Neutral", "Negative"},
+      sorted(set(_pre_submit["sentiment"])))
+# The rating slider defaults to 3, which must land on Neutral.
+check("the default rating produces a Neutral band",
+      set(_pre_submit["sentiment"]) == {"Neutral"},
+      sorted(set(_pre_submit["sentiment"])))
 
 # Only this student's row — other students' rows for the same category are
 # expected and must be left alone.
@@ -131,11 +139,23 @@ check("exactly one row was written for the fixture student", len(rows) == 1, len
 check("it belongs to the fixture student",
       len(rows) == 1 and rows.iloc[0]["username"] == "SubmitProbe",
       list(rows["username"]) if len(rows) else None)
-check("the comment was stored",
-      len(rows) == 1 and "projector" in rows.iloc[0]["comment"])
+# The comment column is kept so historical rows stay readable, and is written
+# empty for new submissions. Asserted rather than skipped: a row silently
+# acquiring text again would mean the form has been reverted.
+check("the comment column is retained and empty",
+      "comment" in rows.columns and len(rows) == 1
+      and not str(rows.iloc[0]["comment"] or "").strip(),
+      rows.iloc[0].get("comment") if len(rows) else None)
 check("a sentiment label was computed",
       len(rows) == 1 and rows.iloc[0]["sentiment"] in ("Positive", "Neutral", "Negative"),
       rows.iloc[0]["sentiment"] if len(rows) else None)
+check("the label is the rating's band",
+      len(rows) == 1
+      and rows.iloc[0]["sentiment"] == sentiment.label_from_rating(rows.iloc[0]["rating"]),
+      (rows.iloc[0]["rating"], rows.iloc[0]["sentiment"]) if len(rows) else None)
+check("the engine is recorded as the rating threshold engine",
+      len(rows) == 1 and rows.iloc[0]["sentiment_engine"] == sentiment.ENGINE_NAME,
+      rows.iloc[0].get("sentiment_engine") if len(rows) else None)
 check("a confidence was computed",
       len(rows) == 1 and 0.0 <= float(rows.iloc[0]["sentiment_confidence"]) <= 1.0,
       rows.iloc[0]["sentiment_confidence"] if len(rows) else None)
@@ -184,13 +204,24 @@ for cat in CATEGORIES[1:]:
     if by_label(at2.button, "Submit Feedback →") is None:
         check(f"{cat}: form shown", False, [b.label for b in at2.button])
         continue
-    # Lecturer Teaching Style requires a lecturer name — fill it in
+    # Lecturer Teaching Style requires a lecturer, and it is now a dropdown
+    # (a text box was replaced because a hand-typed surname could not be grouped
+    # reliably — "Dr. Obi" is not a department member).
     if cat == "Lecturer Teaching Style":
-        for ti in at2.text_input:
-            if "Lecturer" in (ti.label or ""):
-                ti.set_value("Dr. Obi")
+        sel = None
+        for sb in at2.selectbox:
+            if "Lecturer" in (sb.label or ""):
+                sel = sb
                 break
-    at2.text_area[0].set_value(f"Comments about {cat}. The hall projector is broken.")
+        if sel is None:
+            check(f"{cat}: the lecturer picker exists", False,
+                  [s.label for s in at2.selectbox])
+            continue
+        options = [o for o in sel.options if "Select a lecturer" not in o]
+        check(f"{cat}: the picker lists the handbook's teaching staff",
+              len(options) == len(config.TEACHING_STAFF),
+              f"{len(options)} option(s)")
+        sel.set_value(options[0]).run()
     by_label(at2.button, "Submit Feedback →").click().run()
     ex = exceptions_of(at2)
     saved = db.filter_by_username(db.load_data(category=cat, session=SESSION), "SubmitProbe")

@@ -287,11 +287,49 @@ SAFE_NAMES = {
     r"^ctx_insight_html$": "decision_insights.py: esc(t) per tag, plus a "
                              "literal from CTX_REC_TEMPLATES",
     r"^tag_html$": "decision_insights.py: esc(t) per tag",
+    r"^spread$": "decision_insights.py: built by joining esc()'d label and count "
+                   "pairs, then interpolated whole",
+    r"^sent_safe$": "feedback_form.py: esc()'d at its only assignment",
+    r"^sent_colour$": "sentiment.label_color() — one of three hex literals, "
+                         "returned from a fixed dict keyed by the closed label set",
+    r"^tag_html$": "targets.py: esc(t) per tag via _tags()",
     r"^feature_cards$": "login.py: a comprehension over the FEATURES literal list",
     r"^engine_label$": "full_dashboard.py: esc()'d or a literal in all 3 branches",
     r"^lex_count$|^mwe_count$|^neg_count$|^intens_count$":
         "sentiment.engine_status() ints, esc()'d at assignment",
     r"^conf_range$": "sentiment.engine_status()['confidence_range'], esc()'d",
+    r"^_thresholds$": "full_dashboard.py: sentiment.engine_status()"
+                        "['rating_thresholds'], esc()'d at assignment",
+    r"^_badge_style\(" : "targets.py: a helper that returns a finished style "
+                          "string built only from _hex()'d literals",
+    r"^_stars\(" : "targets.py: builds SVG from two literals and an int; "
+                     "no value from a row reaches it but avg_rating, as int()",
+    r"^_icon_wrap\(": "targets.py: a helper returning finished markup; both "
+                      "arguments are literals or i() calls",
+    r"^_card_open\(": "targets.py: a helper returning finished markup; both "
+                      "arguments pass through _hex()",
+    r"^_hex\(" : "targets.py: strips every character that is not #0-9a-fA-F, "
+                   "so nothing else can reach a style attribute",
+    # Scoped to targets.py on purpose. A global `^t$` / `^c$` would be swallowed
+    # by every other module's use of those names — and `t` is the loop variable
+    # in the exact historical bug this gate exists for
+    # (`test_xss_static_selftest.py::bug_loop_var.py`). A generic local name is
+    # never safe to allowlist globally; the selftest proves it by failing the
+    # moment one is.
+    r"app_pages/targets.py :: ^safe_colour$": "_hex()'d — the only value that reaches a "
+                                     "style attribute",
+    r"app_pages/targets.py :: ^safe_tint$": "_hex()'d, same as safe_colour",
+    r"app_pages/targets.py :: ^inner$": "an i() call — an inline SVG from icons.py, "
+                              "with its colour already _hex()'d by the caller",
+    r"^_count_of\(" : "targets.py: returns esc(value) — the single place a "
+                       "count is rendered",
+    r"^_star_badge\(" : "targets.py: returns finished markup; its two "
+                          "arguments are esc()'d inside it",
+    r"^_tags\(" : "targets.py: returns finished markup; each label goes "
+                    "through esc() inside it",
+    r"^unknown$": "targets.py: one of two literal strings, chosen by a boolean — "
+                  "no value from a row reaches it",
+    r"^suffix$": "targets.py: f' · {int(count)}' — an int or the empty string",
     r"^_align_top$": "a label from _ALIGN_SCALE, or the literal '—'",
     r"^_align_top_n$": "a count — an int",
     r"^_align_idx$": "an int index into _ALIGN_SCALE",

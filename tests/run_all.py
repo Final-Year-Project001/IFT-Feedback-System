@@ -64,8 +64,15 @@ SUITES = [
     "test_schema.py",
     "test_postgres_backend.py",         # SQL translation + backup file safety
     "test_dashboard_math.py",
-    "test_model_roundtrip.py",
-    "test_model_training_trigger.py",   # can an admin train from inside the app?
+    # test_model_roundtrip / test_model_training_trigger were removed with
+    # train_model.py. There is no trained classifier to round-trip and nothing
+    # to train from: the free-text comment box is gone, so a correction is no
+    # longer a labelled sentence but an override of a rating band.
+    "test_rating_engine.py",            # the rating -> band rule, in one place
+    "test_session_binding.py",      # a copied link must not sign anyone in
+    "test_analysis_modules.py",      # per-lecturer / course / facility rollups
+    "test_chart_cards.py",           # charts sit in a card, and the trend is bars
+    "test_dialog_close.py",          # every dismiss button must close its dialog
     "test_user_management.py",
     "test_result_dialogs.py",
     "test_password_migration.py",    # do legacy hashes actually get upgraded?
@@ -74,7 +81,9 @@ SUITES = [
     "test_app_render.py",
 ]
 
-REPORTS = ["report_sentiment_engine.py", "report_lexicon_gap.py"]
+# The two `report_sentiment_engine.py` / `report_lexicon_gap.py` scripts went
+# with the lexicon they were reporting on.
+REPORTS = []
 
 # Streamlit's bare-mode warning is noise; the real errors still print.
 NOISE = re.compile(

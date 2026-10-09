@@ -7,17 +7,22 @@ import streamlit as st
 
 import st_compat
 
-from config import CATEGORIES, CAT_META, CURRENT_SESSION, MIN_TRAINING_SAMPLES, ALL_SESSIONS_LABEL
+from config import CATEGORIES, CAT_META, CURRENT_SESSION, ALL_SESSIONS_LABEL
 from db import (
     load_data, parse_context, context_text_list, correct_sentiment,
     get_academic_sessions, get_active_session, create_academic_session,
     set_default_session, get_session_stats,
     delete_academic_session, count_session_submissions,
 )
-from charts import make_rating_bar, make_category_radar, make_sentiment_pie, make_level_pie, make_trend_line
+from charts import make_rating_bar, make_category_radar, make_sentiment_pie, make_level_pie, make_trend_bar
+from app_pages.targets import (
+    render_lecturer_targets, render_course_targets, render_facility_targets,
+    chart_card,
+)
+from app_pages.decision_insights import show_decision_support
 from components import html_metric, page_header, section_header, empty_state, esc, html_alert
 from icons import i, sentiment_icon, sentiment_color
-from sentiment import engine_status, analyze_sentiment
+from sentiment import engine_status
 
 
 def _as_float(value):
@@ -34,90 +39,44 @@ def _as_float(value):
 
 
 def _render_engine_status_card(status: dict):
-    """Renders the premium engine status card with all diagnostics."""
-    is_trained = status["trained_model_available"]
-    is_vader = status["vader_available"]
-    meta = status.get("trained_model_meta") or {}
+    """Renders the rating engine's status card.
 
-    # Active engine pill
+    VADER and the trained classifier are both gone, so there is no "which engine
+    is running" question left to answer — there is exactly one, it is three
+    integer comparisons, and it cannot be degraded. The card now reports the
+    thresholds instead, which is the only thing an administrator can actually
+    check.
+    """
     problems = status.get("engine_problems") or []
+
+    engine_color = "#059669"
+    engine_bg = "rgba(5,150,105,.08)"
+    engine_border = "rgba(5,150,105,.25)"
+    engine_dot = "#10b981"
+    engine_label = esc(status.get("active_engine", "rating_threshold_engine"))
+    engine_icon_name = "zap"
     if problems:
-        # A degraded engine must not be dressed up in the healthy green pill.
+        # Kept as a branch rather than deleted: `engine_status()` is a public
+        # helper, and if it ever reports a problem this card must not dress it
+        # up in the healthy green pill.
         engine_color = "#d97706"
         engine_bg = "rgba(217,119,6,.08)"
         engine_border = "rgba(217,119,6,.25)"
         engine_dot = "#f59e0b"
         engine_label = f"Degraded — {esc(status.get('engine_name', 'unavailable'))}"
         engine_icon_name = "alert-triangle"
-    elif is_trained:
-        engine_color = "#059669"
-        engine_bg = "rgba(5,150,105,.08)"
-        engine_border = "rgba(5,150,105,.25)"
-        engine_dot = "#10b981"
-        engine_label = esc(status.get("active_engine", "Supervised Classifier"))
-        engine_icon_name = "cpu"
-    elif is_vader:
-        engine_color = "#2563eb"
-        engine_bg = "rgba(37,99,235,.08)"
-        engine_border = "rgba(37,99,235,.25)"
-        engine_dot = "#3b82f6"
-        engine_label = "VADER Academic Pro"
-        engine_icon_name = "zap"
-    else:
-        engine_color = "#dc2626"
-        engine_bg = "rgba(220,38,38,.06)"
-        engine_border = "rgba(220,38,38,.2)"
-        engine_dot = "#ef4444"
-        engine_label = "Unavailable"
-        engine_icon_name = "alert-circle"
 
     # Metric values
     lex_count = esc(status.get("domain_lexicon_terms", 0))
     mwe_count = esc(status.get("mwe_rules_count", 0))
     neg_count = esc(status.get("negation_tokens", 0))
     intens_count = esc(status.get("intensifier_tokens", 0))
-    # These two lines used to be, in order:
-    #     conf_range = esc(status.get("confidence_range", ""))
-    #     conf_range = status.get("confidence_range", "48% – 99%")
-    # The second overwrote the first, so the escape was thrown away and the
-    # unescaped value was interpolated into `unsafe_allow_html` below. The
-    # default also only applied when the KEY was absent, not when the value
-    # was None — `esc(None)` renders the literal text "None".
+    # `esc` is not optional here and the fallback below deliberately keeps a
+    # real default rather than the literal text "None": this value is
+    # interpolated into `unsafe_allow_html`.
     _conf_raw = status.get("confidence_range")
-    conf_range = esc(_conf_raw) if _conf_raw else "48% &ndash; 99%"
-
-    # Trained model extra stats
-    trained_meta_html = ""
-    if is_trained and meta:
-        # Guarded: these come from a pickle on disk, and a model trained by an
-        # older build (or hand-edited) can be missing any of these keys, hold
-        # a string, or hold None. `{acc:.0%}` raises TypeError on a str and
-        # ValueError on None, and the whole page died with it.
-        acc = _as_float(meta.get("accuracy"))
-        f1 = _as_float(meta.get("macro_f1"))
-        n_samp = esc(meta.get("n_samples", "?"))
-        trained_at = esc(str(meta.get("trained_at", "?"))[:10])
-        acc_txt = esc(f"{acc:.0%}") if acc is not None else "—"
-        f1_txt = esc(f"{f1:.0%}") if f1 is not None else "—"
-        trained_meta_html = f"""
-        <div class="engine-trained-row">
-            <div class="engine-trained-stat">
-                <div class="engine-trained-val" style="color:#059669;">{acc_txt}</div>
-                <div class="engine-trained-lbl">Test Accuracy</div>
-            </div>
-            <div class="engine-trained-stat">
-                <div class="engine-trained-val" style="color:#7c3aed;">{f1_txt}</div>
-                <div class="engine-trained-lbl">Macro F1</div>
-            </div>
-            <div class="engine-trained-stat">
-                <div class="engine-trained-val" style="color:#0891b2;">{n_samp}</div>
-                <div class="engine-trained-lbl">Training Samples</div>
-            </div>
-            <div class="engine-trained-stat">
-                <div class="engine-trained-val" style="color:#d97706;font-size:.75rem;">{trained_at}</div>
-                <div class="engine-trained-lbl">Last Trained</div>
-            </div>
-        </div>"""
+    conf_range = esc(_conf_raw) if _conf_raw else "90% &ndash; 99%"
+    _thresholds = esc(status.get("rating_thresholds", "1-2 Negative · 3 Neutral · 4-5 Positive"))
 
     st.markdown(f"""
     <div class="engine-status-card">
@@ -137,141 +96,29 @@ def _render_engine_status_card(status: dict):
                 </div>
             </div>
             <div class="engine-conf-badge">
-                {i("shield", 13, "#7c3aed")} Confidence Range: <strong>{conf_range}</strong>
+                {i("chart-bar", 13, "#7c3aed")} Bands: <strong>{_thresholds}</strong>
             </div>
         </div>
         <div class="engine-metrics-row">
             <div class="engine-metric-box">
-                <div class="engine-metric-val" style="color:#2563eb;">{lex_count}</div>
-                <div class="engine-metric-lbl">{i("book-open", 11, "#94a3b8")} Domain Lexicon</div>
+                <div class="engine-metric-val" style="color:#2563eb;">3</div>
+                <div class="engine-metric-lbl">{i("chart-bar", 11, "#94a3b8")} Bands</div>
             </div>
             <div class="engine-metric-box">
-                <div class="engine-metric-val" style="color:#7c3aed;">{mwe_count}</div>
-                <div class="engine-metric-lbl">{i("git-merge", 11, "#94a3b8")} MWE Rules</div>
+                <div class="engine-metric-val" style="color:#7c3aed;">{esc(status.get('negative_max', 2))}&ndash;{esc(status.get('neutral', 3))}</div>
+                <div class="engine-metric-lbl">{i("frown", 11, "#94a3b8")} Negative &middot; Neutral</div>
             </div>
             <div class="engine-metric-box">
-                <div class="engine-metric-val" style="color:#dc2626;">{neg_count}</div>
-                <div class="engine-metric-lbl">{i("slash", 11, "#94a3b8")} Negation Tokens</div>
-            </div>
-            <div class="engine-metric-box">
-                <div class="engine-metric-val" style="color:#d97706;">{intens_count}</div>
-                <div class="engine-metric-lbl">{i("zap", 11, "#94a3b8")} Intensifiers</div>
+                <div class="engine-metric-val" style="color:#059669;">{esc(status.get('neutral', 3))}&ndash;5</div>
+                <div class="engine-metric-lbl">{i("smile", 11, "#94a3b8")} Neutral &middot; Positive</div>
             </div>
         </div>
-        {trained_meta_html}
         {"".join(
             f'<div class="engine-error-pill">{i("alert-triangle", 13, "#dc2626")} {esc(str(p)[:140])}</div>'
             for p in status.get("engine_problems", [])
         )}
     </div>
     """, unsafe_allow_html=True)
-
-
-def _render_live_preview():
-    """Renders the real-time sentiment live preview panel."""
-    st.markdown("""
-    <div class="live-preview-card">
-        <div class="live-preview-header">
-            <div style="display:flex;align-items:center;gap:.7rem;">
-                <div class="live-preview-icon">⚡</div>
-                <div>
-                    <div class="live-preview-title">Live Sentiment Preview</div>
-                    <div class="live-preview-sub">Type any student comment below to see real-time engine analysis</div>
-                </div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    preview_text = st.text_area(
-        "Sample comment",
-        placeholder="e.g. The practical sessions are very hands-on, but the lab computers are broken and outdated…",
-        height=90,
-        key="sentiment_live_preview_input",
-        label_visibility="collapsed",
-    )
-
-    if preview_text and preview_text.strip():
-        result = analyze_sentiment(preview_text.strip())
-        bd = result.to_dict()
-
-        label_colors = {"Positive": "#059669", "Negative": "#dc2626", "Neutral": "#d97706"}
-        label_bgs = {"Positive": "rgba(5,150,105,.08)", "Negative": "rgba(220,38,38,.07)", "Neutral": "rgba(217,119,6,.08)"}
-        label_borders = {"Positive": "rgba(5,150,105,.25)", "Negative": "rgba(220,38,38,.2)", "Neutral": "rgba(217,119,6,.2)"}
-
-        lc = label_colors.get(result.label, "#475569")
-        lb = label_bgs.get(result.label, "rgba(71,85,105,.06)")
-        lbr = label_borders.get(result.label, "rgba(71,85,105,.2)")
-
-        conf_pct = result.confidence_pct
-        conf_label = result.confidence_label
-
-        # Polarity bars
-        pos_w = round(bd.get("pos", 0) * 100)
-        neg_w = round(bd.get("neg", 0) * 100)
-        neu_w = max(0, 100 - pos_w - neg_w)
-
-        contrast_html = ""
-        if bd.get("contrast_detected"):
-            contrast_html = f"""
-            <div class="preview-tag" style="background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.25);color:#7c3aed;">
-                {i("git-branch", 11, "#7c3aed")} Contrastive clause detected
-            </div>"""
-
-        pos_cues_html = ""
-        if bd.get("pos_cues"):
-            tags = "".join(f'<span class="preview-cue-tag preview-cue-pos">{esc(c)}</span>'
-                           for c in bd["pos_cues"][:6])
-            pos_cues_html = f'<div class="preview-cues-row">{i("smile", 11, "#059669")} <strong style="color:#059669;font-size:.72rem;">Positive signals:</strong> {tags}</div>'
-
-        neg_cues_html = ""
-        if bd.get("neg_cues"):
-            tags = "".join(f'<span class="preview-cue-tag preview-cue-neg">{esc(c)}</span>'
-                           for c in bd["neg_cues"][:6])
-            neg_cues_html = f'<div class="preview-cues-row">{i("frown", 11, "#dc2626")} <strong style="color:#dc2626;font-size:.72rem;">Negative signals:</strong> {tags}</div>'
-
-        st.markdown(f"""
-        <div class="preview-result-card">
-            <div class="preview-result-top">
-                <div class="preview-label-pill" style="background:{lb};border-color:{lbr};color:{lc};">
-                    {i(sentiment_icon(result.label), 15, lc)} {result.label}
-                </div>
-                <div class="preview-conf-wrap">
-                    <div class="preview-conf-bar-track">
-                        <div class="preview-conf-bar-fill" style="width:{conf_pct}%;background:{lc};"></div>
-                    </div>
-                    <span class="preview-conf-text">{conf_pct}% confidence · <em>{conf_label}</em></span>
-                </div>
-                <div class="preview-score-pill">score: <strong>{result.score:+.3f}</strong></div>
-            </div>
-            <div class="preview-polarity-bars">
-                <div class="preview-pol-item">
-                    <div class="preview-pol-label" style="color:#059669;">{i("smile",10,"#059669")} Positive</div>
-                    <div class="preview-pol-track"><div class="preview-pol-fill" style="width:{pos_w}%;background:#059669;"></div></div>
-                    <span class="preview-pol-pct">{pos_w}%</span>
-                </div>
-                <div class="preview-pol-item">
-                    <div class="preview-pol-label" style="color:#94a3b8;">{i("meh",10,"#94a3b8")} Neutral</div>
-                    <div class="preview-pol-track"><div class="preview-pol-fill" style="width:{neu_w}%;background:#94a3b8;"></div></div>
-                    <span class="preview-pol-pct">{neu_w}%</span>
-                </div>
-                <div class="preview-pol-item">
-                    <div class="preview-pol-label" style="color:#dc2626;">{i("frown",10,"#dc2626")} Negative</div>
-                    <div class="preview-pol-track"><div class="preview-pol-fill" style="width:{neg_w}%;background:#dc2626;"></div></div>
-                    <span class="preview-pol-pct">{neg_w}%</span>
-                </div>
-            </div>
-            {pos_cues_html}
-            {neg_cues_html}
-            {contrast_html}
-            <div class="preview-engine-tag">{i("cpu", 10, "#94a3b8")} Engine: {esc(result.engine)}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    elif preview_text is not None and preview_text.strip() == "":
-        st.markdown(
-            '<div class="preview-empty-hint">↑ Type a comment above to see analysis</div>',
-            unsafe_allow_html=True
-        )
 
 
 def _render_session_manager(admin_username: str):
@@ -454,35 +301,31 @@ def show_full_dashboard(session: str | None = None):
     section_header("trending-up", "Distribution & Overview")
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("bar-chart", 13)} Overall Rating Distribution</div>', unsafe_allow_html=True)
-        fig = make_rating_bar(df, "Rating Distribution")
-        if fig: st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("Overall Rating Distribution", "bar-chart",
+                   make_rating_bar(df, ""),
+                   caption="How many submissions gave each star rating.")
     with c2:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("radar", 13)} Category Overview (Radar)</div>', unsafe_allow_html=True)
-        fig = make_category_radar(df)
-        if fig: st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("Category Overview", "radar",
+                   make_category_radar(df),
+                   caption="Average rating per category, on the same 1-5 scale.")
 
     c3, c4 = st.columns(2)
     with c3:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("smile", 13)} Sentiment Analysis</div>', unsafe_allow_html=True)
-        fig = make_sentiment_pie(df)
-        if fig: st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("Sentiment Analysis", "smile",
+                   make_sentiment_pie(df),
+                   caption="The share of submissions in each band, decided by the rating.")
     with c4:
-        st.markdown(f'<div class="chart-wrap"><div class="chart-title">{i("graduation-cap", 13)} By Student Level</div>', unsafe_allow_html=True)
-        fig = make_level_pie(df)
-        if fig: st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        chart_card("By Student Level", "graduation-cap",
+                   make_level_pie(df),
+                   caption="Which levels are submitting.")
 
-    fig = make_trend_line(df)
-    if fig:
-        st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
-        section_header("trending-down", "Rating Trend Over Time")
-        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-        st_compat.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
+    chart_card(
+        "Rating Trend Over Time", "chart-bar", make_trend_bar(df),
+        caption="Daily average rating. One bar per day with submissions — a bar is "
+                "coloured by the band its average falls in, and a day nobody "
+                "answered is left as a gap rather than shown as a zero.",
+    )
 
     st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
     section_header("folder", "Per-Category Breakdown")
@@ -535,6 +378,30 @@ def show_full_dashboard(session: str | None = None):
             f"</div></div>",
             unsafe_allow_html=True,
         )
+
+    st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
+    section_header("lightbulb", "Recommended Actions")
+    st.caption(
+        "What to do, derived from the evidence below: which category needs urgent "
+        "action, what to read first, and how far the pattern reaches. The "
+        "thresholds are the sentiment bands themselves — 3.0 is neutral and 4.0 "
+        "is where a category reads positive."
+    )
+    show_decision_support(session=session or ALL_SESSIONS_LABEL, heading=False)
+
+    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+    section_header("target", "Who & What Needs Attention")
+    st.caption(
+        "The three decisions this system exists to inform: which lecturer to "
+        "advise, which course to rework, and what to repair first. Each uses the "
+        "structured answers students selected rather than free text, so the "
+        "figures are counts of what was ticked."
+    )
+    render_lecturer_targets(session=session or ALL_SESSIONS_LABEL)
+    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+    render_course_targets(session=session or ALL_SESSIONS_LABEL)
+    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+    render_facility_targets(session=session or ALL_SESSIONS_LABEL)
 
     st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
     section_header("microscope", "Structured Feedback Aggregations")
@@ -673,32 +540,31 @@ def show_full_dashboard(session: str | None = None):
                 )
 
     # ── Sentiment Engine Section ──────────────────────────────────────
-    section_header("flask", "Sentiment Engine — Improve Accuracy")
+    section_header("flask", "How Sentiment Is Decided")
 
     status = engine_status()
     _render_engine_status_card(status)
 
-    st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
-    _render_live_preview()
-
     corrected_count = int((df["admin_corrected_sentiment"].notna()).sum()) if "admin_corrected_sentiment" in df.columns else 0
-    with st.expander(f"Review & correct sentiment labels ({corrected_count} corrected so far)"):
+    with st.expander(f"Review & override sentiment labels ({corrected_count} overridden so far)"):
         st.caption(
-            f"Correcting mislabeled comments here builds the training set for a classifier tuned to this "
-            f"department's own feedback language. Once {MIN_TRAINING_SAMPLES}+ comments are corrected, run "
-            f"`python train_model.py` from the project folder to train it — see SETUP_GUIDE.md."
+            f"The band on every submission comes from its rating, so there is nothing to "
+            f"correct in the normal case. An override is for the rare record where the rating "
+            f"and the structured answers plainly disagree — a 5-star rating on a submission that "
+            f"flags every delivery challenge, for instance. It is recorded against the row and "
+            f"takes precedence over the rating on every chart and export. "
+            f"{corrected_count} of {len(df)} record(s) currently carry one."
         )
-        review_df = df[["id", "category", "comment", "effective_sentiment"]].copy()
-        review_df = review_df[review_df["comment"].fillna("").str.strip() != ""]
+        review_df = df[["id", "category", "rating", "effective_sentiment"]].copy()
         review_df = review_df.rename(columns={"effective_sentiment": "sentiment"})
         edited = st_compat.data_editor(
             review_df,
             use_container_width=True,
             hide_index=True,
-            disabled=["id", "category", "comment"],
+            disabled=["id", "category"],
             column_config={
                 "id": st.column_config.NumberColumn("ID", width="small"),
-                "comment": st.column_config.TextColumn("Comment", width="large"),
+                "rating": st.column_config.NumberColumn("Rating", width="small"),
                 "sentiment": st.column_config.SelectboxColumn(
                     "Sentiment", options=["Positive", "Neutral", "Negative"], required=True,
                 ),

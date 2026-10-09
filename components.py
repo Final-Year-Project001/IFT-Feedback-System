@@ -146,12 +146,19 @@ def _show_result_dialog(payload: dict):
             unsafe_allow_html=True,
         )
         st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
-        st_compat.button(
+        # The button's result was discarded, so pressing it did nothing at all:
+        # the dialog stayed open and the user had to click outside it. A
+        # `st.dialog` only closes when the run that opened it is abandoned —
+        # the documented way to do that is `st.rerun()` inside the dialog body,
+        # which ends this run before the decorator can re-open the modal on the
+        # next one. Every dismiss button here now does that.
+        if st_compat.button(
             payload["button_label"] or "Continue",
             type="primary",
             use_container_width=True,
             key="_result_dialog_ok",
-        )
+        ):
+            st.rerun()
 
     _dlg()
 

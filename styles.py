@@ -3215,5 +3215,219 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
         transform: none !important;
     }
 }
+/* ══════════════════════════════════════════════════════════════════════
+   PREMIUM CHART CARD
+   ══════════════════════════════════════════════════════════════════════
+
+   Replaces the `.chart-wrap` pattern that never actually worked. Those call
+   sites opened the div in one `st.markdown` and closed it in another, and
+   Streamlit closes the markup at the end of each element — so the wrapper was
+   always empty and every chart sat on the bare page. See the note on
+   `chart_card` in `app_pages/targets.py`.
+
+   The card is now a real `st.container(border=True, key="stChartCard…")`, and it
+   is matched through that key rather than through Streamlit's own border
+   wrapper. A `key` beginning with `st` becomes the element's `data-testid`, so
+   this is a hook on the element we actually rendered; an internal wrapper name
+   is undocumented and can be renamed between releases, and a selector that
+   matches nothing removes the frame silently. `tests/test_css.py` checks every
+   `data-testid` here against the real frontend bundle, so a wrong name fails
+   the build rather than the page.
+
+   The frame layered on top: a soft shadow, a gradient hairline along the top
+   edge, and a hairline under the title row.
+   */
+[data-testid^="stChartCard"] {
+    background: var(--navy-card);
+    border: 1px solid var(--navy-border2);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 8px 28px rgba(15, 23, 42, .05);
+    transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease,
+                transform var(--dur-2) ease;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Lift, and warm the border, on hover. Pointer-only: a hover lift on touch
+   sticks after a tap and leaves the card permanently raised. */
+@media (hover: hover) and (pointer: fine) {
+    [data-testid^="stChartCard"]:hover {
+        border-color: rgba(37, 99, 235, .28);
+        box-shadow: 0 2px 4px rgba(15, 23, 42, .05), 0 14px 38px rgba(37, 99, 235, .10);
+        transform: translateY(-2px);
+    }
+}
+
+/* The gradient hairline along the top edge. Painted rather than bordered so it
+   can fade out at both ends instead of stopping at the corners. */
+[data-testid^="stChartCard"]::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+        rgba(37, 99, 235, 0) 0%,
+        rgba(37, 99, 235, .55) 22%,
+        rgba(124, 58, 237, .55) 62%,
+        rgba(37, 99, 235, 0) 100%);
+    opacity: .5;
+    transition: opacity var(--dur-3) ease;
+    pointer-events: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    [data-testid^="stChartCard"]:hover::before {
+        opacity: 1;
+    }
+}
+
+[data-testid^="stChartCard"] > div:first-child {
+    padding: 0;
+}
+
+/* ── the title row ─────────────────────────────────────────────────── */
+.chart-card-head {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    padding: 1rem 1.35rem .8rem;
+    border-bottom: 1px solid var(--navy-border2);
+    background: linear-gradient(180deg,
+        rgba(248, 250, 252, .95) 0%, rgba(255, 255, 255, 0) 100%);
+}
+
+.chart-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem; height: 1.9rem;
+    border-radius: .6rem;
+    background: rgba(37, 99, 235, .10);
+    border: 1px solid rgba(37, 99, 235, .18);
+    color: #2563eb;
+    flex-shrink: 0;
+}
+
+.chart-card-title {
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: .10em;
+    text-transform: uppercase;
+    color: var(--text-2);
+}
+
+/* ── the plot ────────────────────────────────────────────────────────
+   Streamlit gives every Plotly figure its own toolbar/plot div; removing the
+   default padding inside the card is what stops the chart looking like it is
+   floating inside a box rather than filling it. */
+[data-testid^="stChartCard"] .js-plotly-plot,
+[data-testid^="stChartCard"] [data-testid="stPlotlyChart"] {
+    border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px);
+}
+
+/* ── the caption ───────────────────────────────────────────────────── */
+..chart-card-caption {
+    font-size: .74rem;
+    color: var(--text-3);
+    line-height: 1.5;
+    padding: .1rem 1.35rem 1.05rem;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PLAYBOOK LIST
+   ── The "what to do about it" steps under each Decision Insights card.
+
+   A numbered list rather than another paragraph: the three steps are ordered
+   by when they matter, and a paragraph reads as one block of advice where a
+   reader needs to see that reading the evidence comes before deciding anything.
+   ══════════════════════════════════════════════════════════════════════ */
+.playbook-list {
+    margin: .7rem 0 .2rem;
+    padding-left: 0;
+    list-style: none;
+    counter-reset: playbook;
+    display: flex;
+    flex-direction: column;
+    gap: .45rem;
+}
+
+.playbook-list li {
+    counter-increment: playbook;
+    position: relative;
+    padding-left: 1.9rem;
+    font-size: .8rem;
+    line-height: 1.55;
+    color: var(--text-2);
+}
+
+.playbook-list li::before {
+    content: counter(playbook);
+    position: absolute;
+    left: 0; top: .05rem;
+    width: 1.45rem; height: 1.45rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(37, 99, 235, .10);
+    border: 1px solid rgba(37, 99, 235, .20);
+    color: #2563eb;
+    /* Held at the 0.7rem floor rather than shrunk for a single digit. The
+       digit is the only content here and 11.2px is the project's smallest
+       permitted step, so a "1" in a smaller circle would be the one piece of
+       text in the UI below it. */
+    font-size: .7rem;
+    font-weight: 700;
+    font-family: var(--font-sans, "Segoe UI", sans-serif);
+}
+
+@media (max-width: 700px) {
+    .playbook-list li { padding-left: 1.8rem; font-size: .78rem; }
+    /* The badge keeps its floor on phones too — the circle grows instead. */
+    .playbook-list li::before { width: 1.35rem; height: 1.35rem; }
+}
+
+/* Shown in place of a chart when a builder returns None, so the card keeps its
+   shape rather than leaving a titled empty box on the page. */
+.chart-card-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 7rem;
+    margin: 1.1rem 1.35rem;
+    border: 1px dashed var(--navy-border2);
+    border-radius: var(--radius-md, 12px);
+    background: var(--navy-card2);
+    color: var(--text-3);
+    font-size: .8rem;
+    text-align: center;
+    padding: 1rem;
+}
+
+/* ── phone ───────────────────────────────────────────────────────────
+   The card keeps its radius but loses the lift: on a touch device the hover
+   state never clears, so the shadow would sit raised forever. */
+@media (max-width: 700px) {
+    [data-testid^="stChartCard"] {
+        border-radius: var(--radius-md, 12px);
+        transform: none !important;
+    }
+    .chart-card-head { padding: .85rem 1rem .7rem; }
+    .chart-card-caption { padding: 0 1rem .9rem; }
+    .chart-card-empty { margin: .9rem 1rem; }
+}
+
+/* ── reduced motion ────────────────────────────────────────────────────
+   The lift is a transform, so it has to be cancelled here explicitly: a
+   transition on a property the user has asked us not to animate still runs on
+   some engines. */
+@media (prefers-reduced-motion: reduce) {
+    [data-testid^="stChartCard"] {
+        transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
+    }
+    [data-testid^="stChartCard"]:hover {
+        transform: none;
+    }
+}
 </style>
 """

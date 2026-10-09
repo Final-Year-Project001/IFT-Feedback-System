@@ -17,10 +17,10 @@ from config import (
     CAT_META, CATEGORIES, COURSE_CONTENT_EMPHASIS_AREAS, TEACHING_STYLE_METHODS,
     TEACHING_STYLE_CHALLENGES, FACILITIES_ITEMS, CURRICULUM_ALIGNMENT_AREAS,
     CURRICULUM_OUTDATED_AREAS, CURRENT_SESSION, courses_for_level,
-    courses_for_level_semester, SEMESTERS,
+    courses_for_level_semester, SEMESTERS, LECTURER_OPTIONS, LECTURER_PLACEHOLDER,
 )
 from db import load_data, save_data, parse_context, filter_by_username
-from sentiment import analyze_sentiment
+from sentiment import analyze_sentiment, rating_label, label_color, normalize_rating
 from email_service import is_email_configured, send_submission_email, send_completion_email
 from components import (
     html_alert, html_metric, page_header, section_header, render_tag_list, star_row, esc,
@@ -77,9 +77,15 @@ def render_teaching_style_context(level: str):
         f'<div class="context-panel"><div class="context-panel-title">{i("teaching", 15)} Teaching Methods & Experience</div></div>',
         unsafe_allow_html=True,
     )
-    lecturer_name = st.text_input("Lecturer / Course Instructor",
-                                   placeholder="e.g. Dr. Obi, Prof. Eze",
-                                   key="ctx_lecturer_name")
+    lecturer_name = st.selectbox(
+        "Lecturer / Course Instructor",
+        LECTURER_OPTIONS,
+        key="ctx_lecturer_name",
+        help="The teaching staff of the Department of Information Technology, "
+             "from the Department Handbook §5.1. Pick the person, not a spelling "
+             "of their name — the administrative breakdown groups on the exact "
+             "entry you choose.",
+    )
     course_options = courses_for_level(level)
     course_code = st.selectbox(
         "Course (optional)", course_options, key="ctx_course_code",
@@ -111,7 +117,7 @@ def render_teaching_style_context(level: str):
                 selected_challenges.append(challenge)
 
     return {
-        "lecturer_name": lecturer_name.strip(),
+        "lecturer_name": "" if lecturer_name == LECTURER_PLACEHOLDER else lecturer_name,
         "course_code": course_code if course_code != "Select a course…" else "",
         "effective_methods": selected_methods,
         "challenges": selected_challenges,
@@ -230,42 +236,41 @@ def _render_already_submitted(category, row, session_name: str = ""):
 
     section_header("bar-chart", "Submission Summary")
 
-    # ── Four metric cards: rating / sentiment / confidence / date ───
-    conf_val = row.get("sentiment_confidence")
-    if conf_val is not None and pd.notna(conf_val):
-        conf_pct = f"{int(float(conf_val) * 100)}%"
-    else:
-        # Fallback approximation from compound score
-        score_f = float(row.get("sentiment_score", 0.0) or 0.0)
-        conf_pct = f"{int(min(99, max(52, 55 + abs(score_f) * 40)))}%"
+    # ── Three metric cards: rating / band / date ────────────────────
+    # The "Engine Confidence" card is gone with the engine it described. A
+    # rating sits exactly on its band, so a confidence figure for it was
+    # always 99% and told the student nothing.
+    sent = row.get("effective_sentiment", row.get("sentiment", "Neutral"))
+    # `normalize_rating` rather than `int()`: this is the first thing that
+    # touches `row["rating"]` after it came out of the database, and a NULL or
+    # malformed value would raise here and take the whole summary page with it.
+    rating_val = normalize_rating(row.get("rating"))
+    # Everything rendered below is escaped at the point of interpolation. The
+    # band and its colour both come from `row`, and `label_color` returns a
+    # fixed hex for each of three labels — but the label itself is a DB column,
+    # and an unrecognised value would fall through to the neutral colour while
+    # still being printed.
+    sent_safe = esc(sent)
+    sent_colour = label_color(sent)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(
             f'<div class="metric-card metric-accent-gold">'
-            f'<div class="metric-icon-wrap">{star_row(int(row["rating"]), 16)}</div>'
-            f'<div class="metric-value" style="font-size:1.3rem;">{int(row["rating"])}/5</div>'
+            f'<div class="metric-icon-wrap">{star_row(rating_val, 16)}</div>'
+            f'<div class="metric-value" style="font-size:1.3rem;">{esc(rating_val)}/5</div>'
             f'<div class="metric-label">Your Rating</div></div>',
             unsafe_allow_html=True,
         )
     with c2:
-        sent = row.get("effective_sentiment", row.get("sentiment", "Neutral"))
         st.markdown(
             f'<div class="metric-card">'
-            f'<div class="metric-icon-wrap">{i(sentiment_icon(sent), 24, sentiment_color(sent))}</div>'
-            f'<div class="metric-value" style="font-size:1.3rem;color:{sentiment_color(sent)};">{sent}</div>'
-            f'<div class="metric-label">Sentiment Label</div></div>',
+            f'<div class="metric-icon-wrap">{i(sentiment_icon(sent), 24, sent_colour)}</div>'
+            f'<div class="metric-value" style="font-size:1.3rem;color:{sent_colour};">{sent_safe}</div>'
+            f'<div class="metric-label">Sentiment Band</div></div>',
             unsafe_allow_html=True,
         )
     with c3:
-        st.markdown(
-            f'<div class="metric-card metric-accent-green">'
-            f'<div class="metric-icon-wrap">{i("shield-check", 22, "#059669")}</div>'
-            f'<div class="metric-value" style="font-size:1.3rem;color:#059669;">{conf_pct}</div>'
-            f'<div class="metric-label">Engine Confidence</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c4:
         ts = str(row["timestamp"])[:10] if pd.notna(row["timestamp"]) else "—"
         html_metric("calendar", ts, "Submitted On")
 
@@ -323,16 +328,26 @@ def _render_already_submitted(category, row, session_name: str = ""):
                 unsafe_allow_html=True,
             )
 
-    # ── Comment (quote-card) ──────────────────────────────────────────
-    if pd.notna(row.get("comment")) and str(row["comment"]).strip():
-        st.markdown("<div style='height:.4rem;'></div>", unsafe_allow_html=True)
-        section_header("message-square", "Your Comment")
-        st.markdown(
-            f'<div class="quote-card">'
-            f'<p>{esc(str(row["comment"]).strip())}</p>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+    # ── Rating → sentiment, stated plainly ─────────────────────────────
+    # The two are the same judgement now: the sentiment IS the rating band.
+    # Showing them as two independent figures was what let a reader believe
+    # they could disagree, so they are shown once, with the band named.
+    _label = sent
+    _rating = normalize_rating(row.get("rating"))
+    _word = rating_label(_rating)
+    st.markdown(
+        f'<div class="info-card">'
+        f'<div class="info-card-title">{i("shield-check", 13)} How your rating was recorded</div>'
+        f'<div class="detail-row"><strong>Rating</strong><span>'
+        f'{star_row(_rating, 14)} {esc(_rating)}/5 &mdash; {esc(_word)}'
+        f'</span></div>'
+        f'<div class="detail-row"><strong>Sentiment band</strong><span>'
+        f'<strong style="color:{sent_colour}">{sent_safe}</strong></span></div>'
+        f'<div class="detail-row"><strong>How it was decided</strong>'
+        f'<span>Your rating alone. 1&ndash;2 Negative &middot; 3 Neutral &middot; 4&ndash;5 Positive.</span></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def show_feedback_form(category, user, username, session: str | None = None):
@@ -373,10 +388,15 @@ def show_feedback_form(category, user, username, session: str | None = None):
     context_data = _CONTEXT_RENDERERS.get(category, lambda level: {})(level)
 
     st.markdown("<div style='height:.4rem;'></div>", unsafe_allow_html=True)
-    section_header("edit", "Rating & Written Comments")
+    section_header("edit", "Your Rating")
 
     with st.form(f"form_{category}"):
-        st.markdown(f'<div class="form-section-label">{i("star", 13)} Overall Rating</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="form-section-label">{i("star", 13)} Overall Rating</div>'
+            '<div class="checkbox-hint">This is the whole of your verdict. 1 star is Poor, '
+            '3 stars is average, 5 stars is Excellent.</div>',
+            unsafe_allow_html=True,
+        )
         rating = st.slider("Rate from 1 (Poor) to 5 (Excellent)", 1, 5, 3, key=f"sl_{category}")
         labels = ["", "Poor", "Fair", "Good", "Very Good", "Excellent"]
         colors = ["", "#ef4444", "#f97316", "#f59e0b", "#22c55e", "#10b981"]
@@ -385,28 +405,19 @@ def show_feedback_form(category, user, username, session: str | None = None):
             f'<span class="rating-text" style="color:{colors[rating]};">{labels[rating]}</span></div>',
             unsafe_allow_html=True,
         )
-        st.markdown(f'<div class="form-section-label" style="margin-top:1rem;">{i("message", 13)} Written Comments</div>',
-                    unsafe_allow_html=True)
-        comment = st.text_area(
-            "Provide a detailed account of your experience",
-            placeholder="Describe what is working well, what requires improvement, and any specific recommendations…",
-            height=150, key=f"ta_{category}",
-        )
         submitted = st_compat.form_submit_button("Submit Feedback →", use_container_width=True, type="primary")
         if submitted:
             if category == "Lecturer Teaching Style" and not context_data.get("lecturer_name"):
-                html_alert("Please enter the name of the lecturer you wish to give feedback on.", "warning")
-            elif not comment.strip():
-                html_alert("A written comment is required before submission. Please provide your observations.", "warning")
+                html_alert("Please choose the lecturer you wish to give feedback on.", "warning")
             else:
-                s_res = analyze_sentiment(comment)
+                s_res = analyze_sentiment(rating=rating)
                 ok, msg = save_data(category, {
                     "username": username, "student_level": user["level"], "rating": rating,
-                    "comment": comment, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "additional_info": "", "sentiment": s_res.label, "sentiment_score": s_res.score,
+                    "comment": "", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "additional_info": "", "sentiment": s_res.label,
+                    "sentiment_score": s_res.score,
                     "sentiment_engine": s_res.engine,
                     "sentiment_confidence": s_res.confidence,
-                    "sentiment_cues": {"pos": s_res.pos_cues, "neg": s_res.neg_cues, "contrast": s_res.contrast_detected},
                     "context_data": context_data,
                     "session": active_sess,
                 })

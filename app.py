@@ -181,6 +181,29 @@ import time
 
 _SESSION_PARAM = "futo_sess"        # query-param name carrying the token
 _SESSION_TOKEN_KEY = "futo_session_token"  # session_state mirror of it
+_CLIENT_COOKIE = "futo_client"      # per-browser secret, deliberately NOT in the URL
+
+# ── Why a session needs two secrets, not one ───────────────────────────
+#
+# A token in the URL is a bearer credential: whoever holds the link holds the
+# session. That is exactly what the URL has to be for a session to survive a
+# refresh — there is no cookie and no storage API — but it also means the link
+# can be pasted into a chat and handed to someone else, who then loads the app
+# as the person who sent it and sees that account's dashboard, details and
+# feedback. That was reported from the field.
+#
+# So the token alone no longer authenticates anything. Every session row also
+# records a `client_id`, which lives in a cookie: browsers keep that out of the
+# address bar and never send it when a link is shared. Restoring a session now
+# requires BOTH to match the row.
+#
+#   sender's own browser    token + cookie match    -> restored
+#   receiver opens the link  cookie absent or differs -> signed out, token dropped
+#
+# The failure is deliberately in the safe direction. With cookies blocked,
+# nothing is ever restored and every visit starts at the login page: an
+# inconvenience, not an account compromise. `session_status()` reports which
+# mode is in force so an administrator can see which one they are getting.
 
 # AppTest drives the script through a synthetic runner rather than the real
 # websocket one, and it advertises itself: every session it creates carries an
@@ -236,7 +259,67 @@ CREATE TABLE IF NOT EXISTS web_sessions (
 )
 """
 
+# `client_id` is added defensively rather than by a migration step, for the same
+# reason every other column here is: a database created by an earlier version of
+# this project has to gain it on first connect without anyone running anything.
+_SESSION_CLIENT_COLUMN = "ALTER TABLE web_sessions ADD COLUMN client_id TEXT"
+
 SESSION_TTL_SECONDS = 7 * 24 * 3600  # one week
+
+
+def _read_client_cookie() -> str:
+    """This browser's client id from its cookie, or "" if it has none.
+
+    Read through `st.context.cookies` rather than by parsing a header: that is
+    the supported accessor, and it returns an empty mapping when the context
+    does not carry one at all (a bare `import app`, or AppTest).
+    """
+    try:
+        return str(st.context.cookies.get(_CLIENT_COOKIE, "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _mint_client_cookie() -> None:
+    """Write a fresh client id into this browser's cookie.
+
+    Streamlit's Python API can read cookies but not set them, so the write is
+    done in the page through a same-origin component iframe — Streamlit mounts
+    it with `allow-scripts allow-same-origin`, which is exactly the combination
+    that lets `document.cookie` reach the app's own origin.
+
+    The value is also kept in `session_state` so that everything downstream in
+    *this* run agrees on one id. The cookie is what the next run reads back, and
+    it only becomes readable once the browser has loaded the component — which
+    is why a first-time visitor cannot be signed in by a token they did not earn.
+    """
+    if _is_test_run():
+        return
+    value = secrets.token_urlsafe(32)
+    st.session_state[_CLIENT_COOKIE] = value
+    try:
+        import streamlit.components.v1 as components
+        components.html(
+            "<script>try{document.cookie="
+            f"'{_CLIENT_COOKIE}={value}; path=/; max-age=31536000; SameSite=Lax'"
+            ";}catch(e){}</script>",
+            height=0,
+        )
+    except Exception:
+        # If the component cannot be mounted, no cookie is written and the
+        # session simply never persists. Nothing else breaks.
+        pass
+
+
+def session_status() -> dict:
+    """Which persistence mode this browser is in. Surfaced in the admin health panel."""
+    client = _read_client_cookie()
+    return {
+        "url_token_bound": True,
+        "browser_cookie_bound": bool(client),
+        "mode": "token + browser cookie" if client else "not bound yet (sign-in must be repeated)",
+        "cookie_name": _CLIENT_COOKIE,
+    }
 
 
 def _session_token() -> str:
@@ -259,8 +342,29 @@ def _session_token() -> str:
     return token
 
 
+def _ensure_session_schema(conn) -> None:
+    """Creates `web_sessions` and adds `client_id` to an older table.
+
+    A row written before this column existed has `client_id` NULL, and NULL can
+    never equal the cookie, so those rows simply stop restoring. That is the
+    correct outcome: they predate the browser binding, so the only way to honour
+    one would be to trust a bare URL token again.
+    """
+    conn.execute(_SESSION_TABLE_DDL)
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(web_sessions)").fetchall()}
+    except Exception:
+        cols = set()
+    if "client_id" not in cols:
+        try:
+            conn.execute(_SESSION_CLIENT_COLUMN)
+            conn.commit()
+        except Exception:
+            pass
+
+
 def _persist_session(username: str, payload: dict) -> None:
-    """Writes this browser's auth state, keyed by its own token.
+    """Writes this browser's auth state, keyed by its own token AND its cookie.
 
     A no-op under AppTest, where query params and the websocket are both
     synthetic: there is no browser to keep signed in, and honouring the row
@@ -272,19 +376,26 @@ def _persist_session(username: str, payload: dict) -> None:
     token = st.session_state.get(_SESSION_TOKEN_KEY, "")
     if not token:
         return
+    client_id = st.session_state.get(_CLIENT_COOKIE, "")
+    if not client_id or not _read_client_cookie():
+        # No readable cookie on this browser, so there is nothing to bind the
+        # row to. Writing it unbound would create exactly the session a shared
+        # link can hijack, which is what this column exists to prevent.
+        return
     now = time.time()
     try:
         conn = db.get_db()
-        conn.execute(_SESSION_TABLE_DDL)
+        _ensure_session_schema(conn)
         conn.execute("DELETE FROM web_sessions WHERE seen_at < ?", (now - SESSION_TTL_SECONDS,))
         conn.execute(
-            """INSERT INTO web_sessions (token, username, payload, created_at, seen_at)
-               VALUES (?,?,?,?,?)
+            """INSERT INTO web_sessions (token, username, payload, created_at, seen_at, client_id)
+               VALUES (?,?,?,?,?,?)
                ON CONFLICT(token) DO UPDATE SET
                  username = excluded.username,
                  payload  = excluded.payload,
-                 seen_at  = excluded.seen_at""",
-            (token, username, json.dumps(payload), now, now),
+                 seen_at  = excluded.seen_at,
+                 client_id = excluded.client_id""",
+            (token, username, json.dumps(payload), now, now, client_id),
         )
         conn.commit()
     except Exception:
@@ -293,8 +404,27 @@ def _persist_session(username: str, payload: dict) -> None:
         pass
 
 
+def _drop_token_from_url() -> None:
+    """Removes `futo_sess` from the address bar.
+
+    Called when a token is present but does not belong to this browser. Leaving
+    it there would mean every page the receiver visits carries the sender's
+    token, and every one of them has to re-check it and reject it again.
+    """
+    try:
+        if _SESSION_PARAM in st.query_params:
+            del st.query_params[_SESSION_PARAM]
+    except Exception:
+        pass
+
+
 def _restore_session() -> None:
     """Reloads this browser's auth state, if it signed in before.
+
+    Requires the URL token *and* the browser cookie to match the stored row. A
+    link pasted into someone else's browser has a token but no matching cookie,
+    so it resolves to no session and the receiver lands on the login page — see
+    the note on `_CLIENT_COOKIE`.
 
     Re-reads the user from the `users` table rather than trusting the stored
     payload, so a deleted account cannot keep a session alive and a changed
@@ -303,16 +433,25 @@ def _restore_session() -> None:
     if _is_test_run():
         return
     token = st.session_state.get(_SESSION_TOKEN_KEY, "")
+    client_id = st.session_state.get(_CLIENT_COOKIE, "")
     if not token:
+        return
+    if not client_id or not _read_client_cookie():
+        # A token with no readable cookie is either a brand-new browser or
+        # somebody else's link. Neither may be restored, and the token is
+        # discarded so it stops travelling through this browser's URLs.
+        _drop_token_from_url()
         return
     try:
         conn = db.get_db()
-        conn.execute(_SESSION_TABLE_DDL)
+        _ensure_session_schema(conn)
         row = conn.execute(
-            "SELECT username FROM web_sessions WHERE token = ? AND seen_at >= ?",
-            (token, time.time() - SESSION_TTL_SECONDS),
+            """SELECT username FROM web_sessions
+               WHERE token = ? AND client_id = ? AND seen_at >= ?""",
+            (token, client_id, time.time() - SESSION_TTL_SECONDS),
         ).fetchone()
         if not row:
+            _drop_token_from_url()
             return
         conn.execute("UPDATE web_sessions SET seen_at = ? WHERE token = ?",
                      (time.time(), token))
@@ -348,12 +487,22 @@ def _forget_session() -> None:
         return
     try:
         conn = db.get_db()
-        conn.execute(_SESSION_TABLE_DDL)
+        _ensure_session_schema(conn)
         conn.execute("DELETE FROM web_sessions WHERE token = ?", (token,))
         conn.commit()
     except Exception:
         pass
 
+
+# Establish the browser identity before anything reads a token, because the
+# restore below needs both. The cookie is read first; only when the browser has
+# none does the component get mounted to write one. Reading first avoids
+# re-minting on every single page render.
+_client_from_cookie = _read_client_cookie()
+if _client_from_cookie:
+    st.session_state[_CLIENT_COOKIE] = _client_from_cookie
+elif not _is_test_run():
+    _mint_client_cookie()
 
 # Put this browser's token into session_state FIRST, so both `_restore_session`
 # and any later `_persist_session` in this same run agree on the key.
