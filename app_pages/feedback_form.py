@@ -19,12 +19,12 @@ from config import (
     CURRICULUM_OUTDATED_AREAS, CURRENT_SESSION, courses_for_level,
     courses_for_level_semester, SEMESTERS, LECTURER_OPTIONS, LECTURER_PLACEHOLDER,
 )
-from db import load_data, save_data, parse_context, filter_by_username
+from db import load_data, save_data, parse_context, filter_by_username, get_active_semester
 from sentiment import analyze_sentiment, rating_label, label_color, normalize_rating
 from email_service import is_email_configured, send_submission_email, send_completion_email
 from components import (
     html_alert, html_metric, page_header, section_header, render_tag_list, star_row, esc,
-    park_result_dialog,
+    request_confirmation, take_confirmation,
 )
 from icons import i, sentiment_icon, sentiment_color
 
@@ -40,11 +40,17 @@ def render_course_content_context(level: str):
     )
     level_label = f"{level} Level" if level and level != "Staff" else "your"
 
-    st.markdown(f'<div class="form-section-label">{i("calendar", 13)} Which semester are you rating?</div>',
-                unsafe_allow_html=True)
-    semester = st.radio(
-        "Semester", SEMESTERS, key="ctx_semester_select", horizontal=True, label_visibility="collapsed",
-        help="Harmattan and Rain semester courses are different — pick the one your course was taught in.",
+    # The semester is chosen once, at the top of the page, and gated against the
+    # session's active semester before this renderer is ever reached. Reading it
+    # from session_state rather than offering a second radio here means a
+    # student cannot pick "Rain" in one control and "Harmattan" in another, and
+    # the course list always matches the semester the page already validated.
+    semester = st.session_state.get("feedback_semester") or SEMESTERS[0]
+    st.markdown(
+        f'<div class="course-semester-note">{i("calendar", 13)} '
+        f'Showing <strong>{esc(semester)}</strong> semester courses for the '
+        f'{esc(level_label)} curriculum.</div>',
+        unsafe_allow_html=True,
     )
 
     course_options = courses_for_level_semester(level, semester)
@@ -351,42 +357,154 @@ def _render_already_submitted(category, row, session_name: str = ""):
     )
 
 
+def _set_semester_choice(semester: str):
+    """Radio callback: record the student's chosen semester.
+
+    A widget callback runs before the script body, which makes it the one place
+    that can write the radio's own key without Streamlit rejecting the write
+    ("cannot be modified after the widget is instantiated"). The switch button
+    in the gate below uses it, and so does the radio itself.
+    """
+    st.session_state["feedback_semester"] = semester
+
+
+def _render_semester_picker(active_semester: str) -> str:
+    """Renders the Rain/Harmattan choice and returns the selection.
+
+    The active semester is the default, but the other one stays selectable: the
+    requirement is that choosing it *explains* that it is not active, not that
+    the control is disabled and silently unresponsive.
+    """
+    if st.session_state.get("feedback_semester") not in SEMESTERS:
+        st.session_state["feedback_semester"] = active_semester
+    st.markdown(
+        f'<div class="semester-picker">'
+        f'<div class="semester-picker-label">{i("calendar", 14)} Which semester is this feedback for?</div>'
+        f'<div class="semester-picker-hint">Only the active semester accepts feedback. '
+        f'For this session that is <strong>{esc(active_semester)}</strong>.</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    return st.radio(
+        "Semester", SEMESTERS, key="feedback_semester",
+        horizontal=True, label_visibility="collapsed",
+    )
+
+
+def _render_inactive_semester_gate(active_sess: str, chosen: str, active_semester: str):
+    """Explains that `chosen` is not the session's active semester.
+
+    Rendered INSTEAD of the form. Letting the student fill in a whole category
+    for a semester the department is not collecting would waste their effort and
+    pollute nothing (the save would be valid), so the gate is a return, not a
+    warning beside a still-open form.
+    """
+    st.markdown(
+        f'<div class="semester-gate">'
+        f'<div class="semester-gate-icon">{i("calendar", 34, "#b45309")}</div>'
+        f'<h3 class="semester-gate-title">The {esc(chosen)} semester is not active</h3>'
+        f'<p class="semester-gate-text">Feedback for the <strong>{esc(active_sess)}</strong> '
+        f'academic session is currently open for the <strong>{esc(active_semester)}</strong> '
+        f'semester only. You selected <strong>{esc(chosen)}</strong>, so there are no '
+        f'courses to rate yet. Switch to {esc(active_semester)} to continue.</p>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    if st_compat.button(
+        f"Switch to {active_semester} and continue",
+        key="semester_switch_btn",
+        type="primary",
+        use_container_width=True,
+        on_click=_set_semester_choice,
+        args=(active_semester,),
+    ):
+        # The callback has already set the radio; the rerun it triggers lands on
+        # the active semester's form. Nothing to do inline.
+        pass
+
+
+def _confirmation_rows(category: str, pending: dict, semester: str):
+    """The (label, value) summary rows for the confirmation modal.
+
+    Plain text, never markup — `components._render_confirm_dialog` escapes each
+    value. Values come from closed widget sets, but a facilities location is
+    free text, which is exactly why the escaping lives at the dialog and not
+    here.
+    """
+    ctx = pending.get("context_data") or {}
+    rows = [
+        ("Category", category),
+        ("Academic Session", pending.get("active_sess", "")),
+        ("Semester", semester),
+    ]
+    course = ctx.get("course_rated") or ctx.get("course_code")
+    if course:
+        rows.append(("Course", course))
+    lecturer = ctx.get("lecturer_name")
+    if lecturer:
+        rows.append(("Lecturer", lecturer))
+    if category == "Facilities":
+        flagged = ctx.get("facilities_flagged") or []
+        if flagged:
+            rows.append(("Facilities flagged", f"{len(flagged)} selected"))
+    if category == "Curriculum":
+        missing = ctx.get("missing_topics") or []
+        if missing:
+            rows.append(("Missing topics flagged", f"{len(missing)} selected"))
+    return rows
+
+
+def _execute_submission(category: str, pending: dict, user: dict, username: str):
+    """Writes a submission that the student confirmed in the modal.
+
+    Reached only from `take_confirmation`, i.e. only after an explicit Confirm.
+    The sentiment is derived from the rating here, not taken from the page, so a
+    confirmed row and a directly-saved row cannot disagree.
+    """
+    rating = pending["rating"]
+    s_res = analyze_sentiment(rating=rating)
+    ok, msg = save_data(category, {
+        "username": pending["username"],
+        "student_level": pending["level"],
+        "rating": rating,
+        "comment": "",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "additional_info": "",
+        "sentiment": s_res.label,
+        "sentiment_score": s_res.score,
+        "sentiment_engine": s_res.engine,
+        "sentiment_confidence": s_res.confidence,
+        "context_data": pending["context_data"],
+        "session": pending["active_sess"],
+    })
+    if ok:
+        _send_post_submission_emails(category, user, username, pending["active_sess"])
+        st.session_state["flash_message"] = msg
+        st.session_state["flash_scope"] = f"feedback:{category}"
+        st.session_state["just_submitted"] = category
+        st.rerun()
+    else:
+        html_alert(msg, "error")
+
+
 def show_feedback_form(category, user, username, session: str | None = None):
     meta = CAT_META[category]
     active_sess = session or CURRENT_SESSION
-    page_header(meta["icon"], category, meta["desc"], badge_text=f"Feedback Submission · {active_sess} Session")
+    active_semester = get_active_semester(active_sess)
 
-    # ── Handle a confirmed submission from the parked dialog ─────────────
-    # The submit handler parked the payload in session_state and showed a
-    # confirmation dialog. When the user clicks "Yes, Submit", the dialog
-    # reruns the script and we land here with the pending data still in
-    # session_state. Execute the save now, then clear the pending state.
-    pending = st.session_state.pop("pending_submission", None)
-    if pending and pending.get("category") == category:
-        rating = pending["rating"]
-        s_res = analyze_sentiment(rating=rating)
-        ok, msg = save_data(category, {
-            "username": pending["username"],
-            "student_level": pending["level"],
-            "rating": rating,
-            "comment": "",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "additional_info": "",
-            "sentiment": s_res.label,
-            "sentiment_score": s_res.score,
-            "sentiment_engine": s_res.engine,
-            "sentiment_confidence": s_res.confidence,
-            "context_data": pending["context_data"],
-            "session": pending["active_sess"],
-        })
-        if ok:
-            _send_post_submission_emails(category, user, username, active_sess)
-            st.session_state["flash_message"] = msg
-            st.session_state["flash_scope"] = f"feedback:{category}"
-            st.session_state["just_submitted"] = category
-            st.rerun()
-        else:
-            html_alert(msg, "error")
+    page_header(
+        meta["icon"], category, meta["desc"],
+        badge_text=f"{active_sess} Session · {active_semester} Semester",
+    )
+
+    # ── Execute a submission the student explicitly confirmed ─────────────
+    # `take_confirmation` is True only on the run after the modal's Confirm
+    # button, and only once. Nothing is written before this point: the submit
+    # handler parks the payload and opens the modal, it does not save.
+    if take_confirmation(f"submit:{category}"):
+        pending_confirmed = st.session_state.pop("pending_submission", None)
+        if pending_confirmed and pending_confirmed.get("category") == category:
+            _execute_submission(category, pending_confirmed, user, username)
 
     # A confirmation parked by the submit handler below. It is popped here
     # rather than on the login page, so a student who submits and is then
@@ -416,6 +534,18 @@ def show_feedback_form(category, user, username, session: str | None = None):
             st.balloons()
         return
 
+    # ── Semester choice, then the active-semester gate ────────────────────
+    # The gate sits before the context renderer so an inactive semester never
+    # even builds the course list, and before the form so there is nothing to
+    # submit.
+    chosen_semester = _render_semester_picker(active_semester)
+    if chosen_semester != active_semester:
+        # Choosing an inactive semester abandons any parked submission for the
+        # active one, so switching back later cannot surface a stale modal.
+        st.session_state.pop("pending_submission", None)
+        _render_inactive_semester_gate(active_sess, chosen_semester, active_semester)
+        return
+
     section_header("folder-open", "Structured Context")
     level = user.get("level") if isinstance(user, dict) else None
     context_data = _CONTEXT_RENDERERS.get(category, lambda level: {})(level)
@@ -443,8 +573,9 @@ def show_feedback_form(category, user, username, session: str | None = None):
             if category == "Lecturer Teaching Style" and not context_data.get("lecturer_name"):
                 html_alert("Please choose the lecturer you wish to give feedback on.", "warning")
             else:
-                # Park the intended submission; a confirmation dialog will
-                # ask the user to confirm before we actually write anything.
+                # Park the intended submission. The modal below asks before
+                # anything is written; `take_confirmation` performs the save on
+                # a later run, only if the student pressed Confirm.
                 st.session_state["pending_submission"] = {
                     "category": category,
                     "rating": rating,
@@ -453,19 +584,28 @@ def show_feedback_form(category, user, username, session: str | None = None):
                     "level": user["level"],
                     "active_sess": active_sess,
                 }
-                park_result_dialog(
-                    title="Confirm Submission",
-                    message=(
-                        "You are about to submit your feedback for "
-                        f"<strong>{category}</strong> with a rating of "
-                        f"<strong>{esc(rating)}/5</strong>.<br><br>"
-                        "<strong>⚠ Once submitted, this feedback cannot be edited "
-                        "or withdrawn.</strong> Please verify your rating before "
-                        "confirming."
-                    ),
-                    button_label="Yes, Submit",
-                )
-                st.rerun()
+
+    # ── Confirm before writing anything ───────────────────────────────────
+    # Opened here, outside the form, and re-opened on every run while a pending
+    # submission exists. That is deliberate: the run that carries the modal's
+    # button click must re-create the modal for the handler to run at all. The
+    # modal is non-dismissible, so the only exits are Cancel and Confirm.
+    pending = st.session_state.get("pending_submission")
+    if pending and pending.get("category") == category:
+        request_confirmation(
+            title="Submit this feedback?",
+            token=f"submit:{category}",
+            intro=(
+                "You are about to record your feedback for this category. "
+                "Please check the details below, then confirm."
+            ),
+            rows=_confirmation_rows(category, pending, chosen_semester),
+            rating=pending.get("rating"),
+            warning="Once submitted, this feedback cannot be edited or withdrawn.",
+            confirm_label="Yes, submit feedback",
+            cancel_label="Keep editing",
+            cancel_keys=("pending_submission",),
+        )
 
 
 def _send_post_submission_emails(category: str, user: dict, username: str, session_name: str = CURRENT_SESSION):

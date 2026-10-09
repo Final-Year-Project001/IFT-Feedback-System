@@ -53,6 +53,12 @@ _OTHER = "Other / General"
 _PICK = "Select a course…"
 SEMESTERS = ["Harmattan", "Rain"]
 
+# The semester a session is assumed to be running until an administrator says
+# otherwise. It is the first entry of SEMESTERS rather than a second literal,
+# so the two can never drift apart, and it is a valid value everywhere a
+# `SEMESTERS` membership test happens.
+DEFAULT_SEMESTER = SEMESTERS[0]
+
 COURSES_BY_LEVEL_SEMESTER: dict[str, dict[str, list[str]]] = {
     "100": {
         "Harmattan": [

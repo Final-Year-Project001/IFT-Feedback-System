@@ -229,18 +229,26 @@ def segmented_control(label: str, options: list, default=None, key: str | None =
 #  DIALOG
 # ══════════════════════════════════════════════════════════════
 
-def dialog(title: str, width: str = "large"):
+def dialog(title: str, width: str = "large", dismissible: bool | None = None):
     """Returns a dialog decorator.
 
     On Streamlit >= 1.31 this is the real modal. On older versions it degrades
     to a bordered container with the same heading, so the deletion confirmation
     still works — it just renders inline instead of as an overlay.
+
+    `dismissible=False` asks for a modal that cannot be closed by clicking
+    outside it, which forces an explicit choice. It is only forwarded where the
+    installed Streamlit accepts it; the bordered-container fallback has no
+    dismiss-on-outside behaviour to disable, so it needs nothing.
     """
     target = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None)
     if target is not None:
+        kwargs = {}
         if _DIALOG_SUPPORTS_WIDTH:
-            return target(title, width=width)
-        return target(title)
+            kwargs["width"] = width
+        if dismissible is not None and _supports_kwarg(target, "dismissible"):
+            kwargs["dismissible"] = dismissible
+        return target(title, **kwargs)
 
     def decorator(func):
         @wraps(func)

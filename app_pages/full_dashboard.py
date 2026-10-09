@@ -7,12 +7,13 @@ import streamlit as st
 
 import st_compat
 
-from config import CATEGORIES, CAT_META, CURRENT_SESSION, ALL_SESSIONS_LABEL
+from config import CATEGORIES, CAT_META, CURRENT_SESSION, ALL_SESSIONS_LABEL, SEMESTERS
 from db import (
     load_data, parse_context, context_text_list, correct_sentiment,
     get_academic_sessions, get_active_session, create_academic_session,
     set_default_session, get_session_stats,
     delete_academic_session, count_session_submissions,
+    get_active_semester, set_active_semester, get_all_session_semesters,
 )
 from charts import make_rating_bar, make_category_radar, make_sentiment_pie, make_level_pie, make_trend_bar
 from app_pages.targets import (
@@ -126,13 +127,17 @@ def _render_session_manager(admin_username: str):
     """Renders the Academic Session management panel for administrators."""
     sessions = get_academic_sessions()
     active_def = get_active_session()
+    semesters = get_all_session_semesters()
     stats = get_session_stats()
 
-    with st.expander("Academic Sessions Management (Create & Set Active Session)"):
+    with st.expander("Academic Sessions Management (Create, Set Active & Semester)"):
         st.markdown(
             '<div style="font-size:.82rem;color:var(--text-2);margin-bottom:.85rem;">'
-            "Manage the academic sessions for student feedback collection. Sessions created here immediately reflect across "
-            "all student submission portals, administrative filters, and analytics dashboards."
+            "Manage the academic sessions for student feedback collection. Each session runs one "
+            "<strong>active semester</strong> &mdash; Rain or Harmattan. Students may only submit feedback "
+            "for that semester; choosing the other one tells them it is not active. Sessions created here "
+            "immediately reflect across all student submission portals, administrative filters, and analytics "
+            "dashboards."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -144,6 +149,7 @@ def _render_session_manager(admin_username: str):
             for sess in sessions:
                 s_stat = stats.get(sess, {"total_feedback": 0, "avg_rating": 0.0, "unique_students": 0})
                 is_cur_def = (sess == active_def)
+                active_sem = semesters.get(sess, SEMESTERS[0])
                 badge_html = (
                     '<span style="background:rgba(5,150,105,.1);color:#059669;border:1px solid rgba(5,150,105,.25);'
                     'padding:.15rem .6rem;border-radius:999px;font-size:.65rem;font-weight:700;">Active Default</span>'
@@ -159,11 +165,32 @@ def _render_session_manager(admin_username: str):
                     f'<div style="font-size:.68rem;color:var(--text-3);margin-top:.15rem;">'
                     f'{s_stat["total_feedback"]} submissions · {s_stat["unique_students"]} students · {s_stat["avg_rating"]}/5 avg'
                     f'</div>'
+                    f'<div style="font-size:.68rem;color:var(--text-3);margin-top:.15rem;">'
+                    f'Active semester: <strong style="color:var(--text-2);">{esc(active_sem)}</strong>'
+                    f'</div>'
                     f'</div>'
                     f'<div style="display:flex;align-items:center;gap:.5rem;">{badge_html}</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+                # The active semester is the whole gate the student form
+                # respects, so it needs a control an administrator can reach
+                # without recreating the session. With two semesters the
+                # remaining choice is unambiguous, so one button flips it.
+                other_sem = SEMESTERS[1] if active_sem == SEMESTERS[0] else SEMESTERS[0]
+                if st_compat.button(
+                    f"Set {other_sem} active for '{sess}'",
+                    key=f"set_semester_{sess}",
+                    use_container_width=True,
+                ):
+                    ok, msg = set_active_semester(sess, other_sem, admin_username)
+                    if ok:
+                        st.session_state["flash_message"] = msg
+                        st.session_state["flash_kind"] = "success"
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
                 # Previously `set_default_session` was imported here and never
                 # called: a session could be created and flagged "set as active
@@ -240,13 +267,23 @@ def _render_session_manager(admin_username: str):
                     placeholder="e.g. 2026/2027",
                     help="Enter standard university session format like 2026/2027",
                 )
+                new_semester = st.selectbox(
+                    "Active semester for this session",
+                    SEMESTERS,
+                    index=0,
+                    help="Students may only give feedback for this semester. You can switch it later "
+                         "from the session list on the left.",
+                )
                 set_as_default = st.checkbox("Set as active default session", value=False)
                 submitted = st_compat.form_submit_button("Create Session →", type="primary", use_container_width=True)
                 if submitted:
                     if not new_sess_name.strip():
                         st.error("Please provide a valid session name.")
                     else:
-                        ok, msg = create_academic_session(new_sess_name.strip(), admin_username, set_as_default)
+                        ok, msg = create_academic_session(
+                            new_sess_name.strip(), admin_username, set_as_default,
+                            active_semester=new_semester,
+                        )
                         if ok:
                             st_compat.toast(msg, icon=":material/check_circle:")
                             st.rerun()
@@ -262,6 +299,15 @@ def show_full_dashboard(session: str | None = None):
     page_header("search", "Full Dashboard",
                 f"Granular departmental analytics, cross-category visualisations, and submission records ({active_sess}).",
                 badge_text=f"Admin View · {active_sess}")
+
+    # A session action (create, set active, set semester, delete) parks its
+    # result here and reruns. Without consuming it on THIS page, the message sat
+    # in session_state until the administrator next loaded the login screen —
+    # the action appeared to do nothing but change a badge. Popped, not read, so
+    # a single action produces a single banner.
+    _flash = st.session_state.pop("flash_message", None)
+    if _flash:
+        getattr(st, st.session_state.pop("flash_kind", "success"))(_flash)
 
     # Render Academic Session Manager
     _render_session_manager(st.session_state.get("username", "admin"))

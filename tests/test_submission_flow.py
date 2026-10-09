@@ -110,9 +110,38 @@ check("no confirmation card yet",
 #
 # The rest of this block is unchanged in intent: a submission on the default
 # rating must not crash, and the row it writes must be real.
+def _mine_here():
+    return db.filter_by_username(
+        db.load_data(category=CATEGORY, session=SESSION), "SubmitProbe")
+
+
 by_label(at.button, "Submit Feedback →").click().run()
 ex = exceptions_of(at)
 check("a submission does not crash", not ex, ex)
+# The report was that the confirmation dialog submitted and closed itself. Both
+# halves are pinned here: pressing Submit must NOT write a row, and the modal
+# must stay on screen until the user answers it.
+check("the confirmation modal is shown",
+      by_label(at.button, "Yes, submit feedback") is not None,
+      [b.label for b in at.button])
+check("nothing is written before confirmation", len(_mine_here()) == 0,
+      len(_mine_here()))
+
+# Cancel must return to an editable form and leave the database untouched.
+by_label(at.button, "Keep editing").click().run()
+check("cancelling returns to the form",
+      by_label(at.button, "Submit Feedback →") is not None,
+      [b.label for b in at.button])
+check("cancelling wrote nothing", len(_mine_here()) == 0, len(_mine_here()))
+
+# Now submit and actually confirm.
+by_label(at.button, "Submit Feedback →").click().run()
+check("the confirmation modal is shown again",
+      by_label(at.button, "Yes, submit feedback") is not None,
+      [b.label for b in at.button])
+by_label(at.button, "Yes, submit feedback").click().run()
+ex = exceptions_of(at)
+check("a confirmed submission does not crash", not ex, ex)
 body = " ".join((m.value or "") for m in at.markdown)
 check("the confirmation card is shown", "Submission Confirmed" in body, body[:200])
 check("no comment box is offered any more",
@@ -223,6 +252,19 @@ for cat in CATEGORIES[1:]:
               f"{len(options)} option(s)")
         sel.set_value(options[0]).run()
     by_label(at2.button, "Submit Feedback →").click().run()
+    # The submission is not written on Submit any more; it is written only once
+    # the confirmation modal has been answered. Assert both halves here too, so a
+    # regression that revives auto-submit fails for every category, not just the
+    # first one.
+    check(f"{cat}: nothing is written before confirmation",
+          len(db.filter_by_username(db.load_data(category=cat, session=SESSION),
+                                    "SubmitProbe")) == 0)
+    confirm = by_label(at2.button, "Yes, submit feedback")
+    if confirm is None:
+        check(f"{cat}: the confirmation modal is shown", False,
+              [b.label for b in at2.button])
+        continue
+    confirm.click().run()
     ex = exceptions_of(at2)
     saved = db.filter_by_username(db.load_data(category=cat, session=SESSION), "SubmitProbe")
     check(f"{cat}: submitted without error and stored", not ex and len(saved) == 1,

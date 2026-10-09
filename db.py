@@ -36,6 +36,8 @@ from config import (
     ALL_SESSIONS_LABEL,
     ADMIN_SEED_ACCOUNTS,
     SEED_ADMINS_ON_STARTUP,
+    SEMESTERS,
+    DEFAULT_SEMESTER,
     # Per-lecturer rollups group on these, and one handbook surname is held by
     # two members of staff — see `lecturer_group_key`.
     lecturer_group_key,
@@ -151,23 +153,46 @@ def _connect():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reset_user ON password_resets(username)")
 
     conn.execute(
-        """CREATE TABLE IF NOT EXISTS academic_sessions(
+        f"""CREATE TABLE IF NOT EXISTS academic_sessions(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_name TEXT NOT NULL UNIQUE,
             is_active INTEGER NOT NULL DEFAULT 1,
             is_default INTEGER NOT NULL DEFAULT 0,
+            active_semester TEXT NOT NULL DEFAULT '{DEFAULT_SEMESTER}',
             created_at TEXT NOT NULL,
             created_by TEXT NOT NULL
         )"""
     )
 
+    # `active_semester` was added after the sessions table first shipped, so an
+    # existing database has to gain it here. Same defensive probe as the other
+    # migrations in this function: `information_schema` on PostgreSQL (PRAGMA
+    # has no equivalent), `PRAGMA table_info` on SQLite. A database old enough
+    # to lack the column gets the default, which is the semester every session
+    # was implicitly running anyway.
+    if active_backend() == "postgresql":
+        session_cols = {row[0] for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'academic_sessions'"
+        ).fetchall()}
+    else:
+        session_cols = {row[1] for row in
+                        conn.execute("PRAGMA table_info(academic_sessions)").fetchall()}
+    if "active_semester" not in session_cols:
+        conn.execute(
+            f"ALTER TABLE academic_sessions ADD COLUMN active_semester "
+            f"TEXT NOT NULL DEFAULT '{DEFAULT_SEMESTER}'"
+        )
+
     # Seed default session if empty
     sess_row = conn.execute("SELECT COUNT(*) FROM academic_sessions").fetchone()
     if sess_row and sess_row[0] == 0:
         conn.execute(
-            """INSERT INTO academic_sessions (session_name, is_active, is_default, created_at, created_by)
-               VALUES (?, 1, 1, ?, 'system')""",
-            (CURRENT_SESSION, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            """INSERT INTO academic_sessions
+               (session_name, is_active, is_default, active_semester, created_at, created_by)
+               VALUES (?, 1, 1, ?, ?, 'system')""",
+            (CURRENT_SESSION, DEFAULT_SEMESTER,
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
 
     conn.execute(
@@ -1679,13 +1704,25 @@ def get_active_session() -> str:
     return sessions[0] if sessions else CURRENT_SESSION
 
 
-def create_academic_session(session_name: str, created_by: str, set_default: bool = False) -> tuple[bool, str]:
-    """Registers a new academic session (e.g. '2026/2027')."""
+def create_academic_session(session_name: str, created_by: str,
+                            set_default: bool = False,
+                            active_semester: str | None = None) -> tuple[bool, str]:
+    """Registers a new academic session (e.g. '2026/2027').
+
+    `active_semester` is the semester students may give feedback for in this
+    session; the other one is shown to them as "not active". An unrecognised
+    value falls back to `DEFAULT_SEMESTER` rather than being stored, so the
+    column can never hold something the feedback gate cannot reason about.
+    """
     name = (session_name or "").strip()
     if not name:
         return False, "Session name cannot be empty."
     if len(name) < 4 or len(name) > 20:
         return False, "Session name must be between 4 and 20 characters (e.g. '2026/2027')."
+
+    semester = (active_semester or "").strip()
+    if semester not in SEMESTERS:
+        semester = DEFAULT_SEMESTER
 
     conn = get_db()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1693,18 +1730,90 @@ def create_academic_session(session_name: str, created_by: str, set_default: boo
         if set_default:
             conn.execute("UPDATE academic_sessions SET is_default = 0")
         conn.execute(
-            """INSERT INTO academic_sessions (session_name, is_active, is_default, created_at, created_by)
-               VALUES (?, 1, ?, ?, ?)""",
-            (name, 1 if set_default else 0, now_str, created_by),
+            """INSERT INTO academic_sessions
+               (session_name, is_active, is_default, active_semester, created_at, created_by)
+               VALUES (?, 1, ?, ?, ?, ?)""",
+            (name, 1 if set_default else 0, semester, now_str, created_by),
         )
         conn.commit()
-        return True, f"Academic session '{name}' created successfully!"
+        return True, (
+            f"Academic session '{name}' created successfully with the "
+            f"{semester} semester active!"
+        )
     except sqlite3.IntegrityError:
         conn.rollback()
         return False, f"Session '{name}' already exists."
     except Exception as e:
         conn.rollback()
         return False, f"Error creating session: {e}"
+
+
+def get_active_semester(session_name: str | None = None) -> str:
+    """The semester students may rate for one academic session.
+
+    Always returns a member of `config.SEMESTERS`. An unknown session, the
+    aggregate filter, or a row written before the column existed all fall back
+    to `DEFAULT_SEMESTER`, so a caller can compare the result to a student's
+    choice without re-validating it.
+    """
+    name = (session_name or "").strip()
+    if not name or name in _AGGREGATE_ALIASES:
+        return DEFAULT_SEMESTER
+    conn = get_db()
+    row = conn.execute(
+        "SELECT active_semester FROM academic_sessions WHERE session_name = ?",
+        (name,),
+    ).fetchone()
+    semester = (row[0] if row and row[0] else DEFAULT_SEMESTER)
+    return semester if semester in SEMESTERS else DEFAULT_SEMESTER
+
+
+def get_all_session_semesters() -> dict[str, str]:
+    """`{session_name: active_semester}` for every configured session.
+
+    One query for the administrator's session list, so it can label every row
+    without a lookup per row.
+    """
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT session_name, active_semester FROM academic_sessions"
+    ).fetchall()
+    return {
+        name: (semester if semester in SEMESTERS else DEFAULT_SEMESTER)
+        for name, semester in rows
+    }
+
+
+def set_active_semester(session_name: str, semester: str,
+                        performed_by: str | None = None) -> tuple[bool, str]:
+    """Sets which semester is active for one academic session.
+
+    Returns `(ok, message)`. The semester is validated here rather than trusted
+    from the caller, so an arbitrary string can never be stored and later
+    compared against a student's own, always-valid, choice.
+    """
+    name = (session_name or "").strip()
+    chosen = (semester or "").strip()
+    if not name:
+        return False, "No academic session was named."
+    if chosen not in SEMESTERS:
+        return False, f"'{chosen}' is not a recognised semester."
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM academic_sessions WHERE session_name = ?", (name,)
+        ).fetchone()
+        if not row:
+            return False, f"Academic session '{name}' does not exist."
+        conn.execute(
+            "UPDATE academic_sessions SET active_semester = ? WHERE session_name = ?",
+            (chosen, name),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        return False, "The active semester could not be changed."
+    return True, f"The {chosen} semester is now active for {name}."
 
 
 def count_session_submissions(session_name: str) -> int:
@@ -1803,17 +1912,36 @@ def delete_academic_session(session_name: str, deleted_by: str,
     return True, msg
 
 
-def set_default_session(session_name: str) -> bool:
-    """Designates an existing session as the active default session (B-30)."""
+def set_default_session(session_name: str, performed_by: str | None = None) -> tuple[bool, str]:
+    """Designates an existing session as the active default session (B-30).
+
+    Returns `(ok, message)`, not a bare bool. The dashboard unpacks this into
+    `ok, msg` and shows the message; the previous bool return made the very
+    first click raise `TypeError` because there was nothing to unpack.
+    `performed_by` is accepted for symmetry with the other session actions and
+    to keep the call site readable, though the default flag is not itself
+    audited.
+    """
+    name = (session_name or "").strip()
+    if not name:
+        return False, "No academic session was named."
     conn = get_db()
     try:
+        row = conn.execute(
+            "SELECT 1 FROM academic_sessions WHERE session_name = ?", (name,)
+        ).fetchone()
+        if not row:
+            return False, f"Academic session '{name}' does not exist."
         conn.execute("UPDATE academic_sessions SET is_default = 0")
-        conn.execute("UPDATE academic_sessions SET is_default = 1 WHERE session_name = ?", (session_name.strip(),))
+        conn.execute(
+            "UPDATE academic_sessions SET is_default = 1 WHERE session_name = ?",
+            (name,),
+        )
         conn.commit()
-        return True
     except Exception:
         conn.rollback()
-        return False
+        return False, "The active session could not be changed."
+    return True, f"'{name}' is now the active default session."
 
 
 def get_session_stats() -> dict[str, dict]:

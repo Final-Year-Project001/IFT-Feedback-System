@@ -70,6 +70,7 @@ SUITES = [
     # longer a labelled sentence but an override of a rating band.
     "test_rating_engine.py",            # the rating -> band rule, in one place
     "test_session_binding.py",      # a copied link must not sign anyone in
+    "test_semester_gate.py",        # active semester: schema, admin control, student gate
     "test_analysis_modules.py",      # per-lecturer / course / facility rollups
     "test_chart_cards.py",           # charts sit in a card, and the trend is bars
     "test_dialog_close.py",          # every dismiss button must close its dialog

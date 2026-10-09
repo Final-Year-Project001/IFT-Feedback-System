@@ -190,6 +190,157 @@ def render_parked_dialog() -> bool:
     return True
 
 
+# ══════════════════════════════════════════════════════════════
+#  CONFIRMATION DIALOG
+# ══════════════════════════════════════════════════════════════
+# A two-button modal for an irreversible ACTION the user is about to take:
+# submit feedback that can no longer be edited, delete an account, move the
+# active semester. It is the deliberate counterpart of the result dialog above
+# — that one reports something that already happened, this one asks BEFORE
+# anything happens.
+#
+# The point that matters is the split between *asking* and *doing*. This dialog
+# writes no data and performs no action. Each button records an answer in
+# session_state and `st.rerun()`s; the calling page then reads
+# `take_confirmation(...)` on the next run and only then runs the action. The
+# earlier feedback flow did the opposite — it popped the parked submission and
+# saved it on the very run that merely *displayed* the dialog, and the dialog's
+# own `st.rerun()` discarded the modal. The user was asked to confirm something
+# that had already happened; that is the bug this replaces.
+#
+# Everything printed is escaped here from a structured payload (title, intro,
+# label/value rows, a rating, a warning). Callers hand over values, never HTML,
+# so a student-typed field can never reach the modal unescaped.
+
+_CONFIRM_DIALOG_KEY = "_pending_confirm_dialog"
+_CONFIRM_APPROVED_KEY = "_confirmed_action"
+
+
+# Non-dismissible: the calling page re-creates this modal on every run while its
+# own pending state is set, so a dismiss-by-outside-click would just reappear on
+# the next interaction. Forcing an explicit choice is also the right interaction
+# for an irreversible action.
+@st_compat.dialog("Please confirm", width="small", dismissible=False)
+def _render_confirm_dialog():
+    """Renders the confirmation modal that is currently active, if any."""
+    payload = st.session_state.get(_CONFIRM_DIALOG_KEY)
+    if not payload:
+        return
+
+    rows = payload.get("rows") or []
+    rows_html = "".join(
+        f'<div class="confirm-dialog-row"><span>{esc(label)}</span>'
+        f'<strong>{esc(value)}</strong></div>'
+        for label, value in rows
+    )
+    rating = payload.get("rating")
+    rating_html = (
+        f'<div class="confirm-dialog-rating">{star_row(int(rating), 18)}'
+        f'<span>{esc(int(rating))}/5</span></div>'
+        if rating is not None else ""
+    )
+    warning_text = payload.get("warning") or ""
+    warning_html = (
+        f'<div class="confirm-dialog-warning">{i("alert-triangle", 16)}'
+        f"<span>{esc(warning_text)}</span></div>"
+        if warning_text else ""
+    )
+
+    st.markdown(
+        f'<div class="confirm-dialog">'
+        f'<div class="confirm-dialog-icon">{i(payload.get("icon", "alert-triangle"), 26)}</div>'
+        f'<div class="confirm-dialog-title">{esc(payload.get("title") or "Please confirm")}</div>'
+        f'<div class="confirm-dialog-intro">{esc(payload.get("intro") or "")}</div>'
+        f'{rating_html}'
+        f'<div class="confirm-dialog-summary">{rows_html}</div>'
+        f"{warning_html}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
+
+    cancel_col, confirm_col = st.columns(2)
+    with cancel_col:
+        if st_compat.button(
+            payload.get("cancel_label") or "Cancel",
+            key="_confirm_dialog_cancel",
+            use_container_width=True,
+        ):
+            # Cancel unwinds the flow: drop the modal and whatever the caller
+            # parked alongside it (e.g. a half-finished submission), then rerun
+            # so the modal is not re-opened from the same payload.
+            st.session_state.pop(_CONFIRM_DIALOG_KEY, None)
+            for key in payload.get("cancel_keys", ()):
+                st.session_state.pop(key, None)
+            st.rerun()
+    with confirm_col:
+        if st_compat.button(
+            payload.get("confirm_label") or "Confirm",
+            key="_confirm_dialog_confirm",
+            type="primary",
+            use_container_width=True,
+        ):
+            # Record the answered token and nothing else. The caller performs
+            # the action on the next run, so a dismissal that never reaches
+            # this line cannot have side effects.
+            st.session_state[_CONFIRM_APPROVED_KEY] = payload["token"]
+            st.session_state.pop(_CONFIRM_DIALOG_KEY, None)
+            st.rerun()
+
+
+def _sanitise_confirmation(title: str, token: str, intro: str, rows, rating,
+                           warning: str, confirm_label: str, cancel_label: str,
+                           icon: str, cancel_keys) -> dict:
+    """Normalises a caller's arguments into the payload the modal renders from."""
+    return {
+        "title": title,
+        "token": token,
+        "intro": intro,
+        "rows": [(str(label), value) for label, value in (rows or [])],
+        "rating": rating,
+        "warning": warning,
+        "confirm_label": confirm_label,
+        "cancel_label": cancel_label,
+        "icon": icon,
+        "cancel_keys": tuple(cancel_keys or ()),
+    }
+
+
+def request_confirmation(title: str, token: str, intro: str = "", rows=None,
+                         rating=None, warning: str = "",
+                         confirm_label: str = "Confirm", cancel_label: str = "Cancel",
+                         icon: str = "alert-triangle", cancel_keys=()):
+    """Opens a two-button confirmation modal on the current run.
+
+    The calling page invokes this on every run while its own pending state is
+    set, so the modal is re-created on the run that carries a button click --
+    that is what lets the Confirm/Cancel handlers actually fire. The dialog
+    performs no action itself: *Confirm* records ``token`` under the approved
+    key and *Cancel* clears the caller's `cancel_keys`; the caller reads
+    `take_confirmation(token)` on the next run and only then does the work.
+
+    All display values are escaped inside `_render_confirm_dialog`, so pass text
+    and `(label, value)` pairs, never markup.
+    """
+    st.session_state[_CONFIRM_DIALOG_KEY] = _sanitise_confirmation(
+        title, token, intro, rows, rating, warning,
+        confirm_label, cancel_label, icon, cancel_keys,
+    )
+    _render_confirm_dialog()
+
+
+def take_confirmation(token: str) -> bool:
+    """True exactly once, on the run after *Confirm* was pressed for `token`.
+
+    The token is consumed here so the action cannot run twice if a later widget
+    triggers another rerun on the same confirmed state.
+    """
+    if st.session_state.get(_CONFIRM_APPROVED_KEY) == token:
+        st.session_state.pop(_CONFIRM_APPROVED_KEY, None)
+        return True
+    return False
+
+
 def html_metric(icon_name: str, value, label: str, accent: str = ""):
     st.markdown(
         f'<div class="metric-card metric-accent-{accent}">'

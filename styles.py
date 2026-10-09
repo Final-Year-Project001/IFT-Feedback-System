@@ -1265,6 +1265,91 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .result-dialog-warning .result-dialog-icon { background: rgba(217,119,6,.14);  color: #b45309; }
 .result-dialog-info    .result-dialog-icon { background: rgba(59,130,246,.12); color: #2563eb; }
 
+/* ═══════════════════════════
+   CONFIRMATION DIALOG (components.request_confirmation)
+
+   The counterpart of the result dialog above: that one reports something that
+   already happened, this one asks BEFORE it happens. Everything the modal
+   prints is escaped in components.py, so the styling only has to make the
+   decision readable — question first, then the facts being confirmed, then the
+   consequence, with the affirmative choice on the right.
+   ═══════════════════════════ */
+.confirm-dialog { text-align: center; padding: .35rem .2rem .1rem; }
+.confirm-dialog-icon {
+    width: 56px; height: 56px; margin: 0 auto .8rem;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: rgba(217,119,6,.14); color: #b45309;
+}
+.confirm-dialog-title { font-size: 1.05rem; font-weight: 800; color: var(--text-1); margin-bottom: .3rem; }
+.confirm-dialog-intro { font-size: .84rem; line-height: 1.6; color: var(--text-2); }
+.confirm-dialog-rating {
+    display: flex; align-items: center; justify-content: center; gap: .5rem;
+    margin: .85rem 0 .1rem; font-size: .82rem; font-weight: 700; color: var(--text-1);
+}
+.confirm-dialog-summary {
+    margin: .85rem 0 0; padding: .2rem .1rem;
+    background: var(--navy-card2); border: 1px solid var(--navy-border2);
+    border-radius: var(--radius-sm); text-align: left;
+}
+.confirm-dialog-row {
+    display: flex; align-items: baseline; justify-content: space-between; gap: .9rem;
+    padding: .5rem .85rem; border-bottom: 1px solid var(--navy-border);
+}
+.confirm-dialog-row:last-child { border-bottom: none; }
+.confirm-dialog-row span {
+    font-size: .7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-3); flex: 0 0 auto;
+}
+.confirm-dialog-row strong {
+    font-size: .82rem; font-weight: 600; color: var(--text-1);
+    text-align: right; word-break: break-word; overflow-wrap: anywhere;
+}
+.confirm-dialog-warning {
+    display: flex; align-items: flex-start; gap: .5rem; text-align: left;
+    margin-top: .85rem; padding: .7rem .85rem;
+    border-radius: var(--radius-sm);
+    background: rgba(220,38,38,.06);
+    border: 1px solid rgba(220,38,38,.2);
+    border-left: 3px solid var(--red);
+    font-size: .76rem; line-height: 1.55; color: #92400e;
+}
+.confirm-dialog-warning > svg { flex-shrink: 0; margin-top: .1rem; }
+
+/* ═══════════════════════════
+   SEMESTER GATE (Rain / Harmattan)
+
+   The picker and the "not active" explanation. The gate is a return, not a
+   warning beside a live form, so it is a self-contained panel: there is
+   genuinely nothing else on the page to interact with.
+   ═══════════════════════════ */
+.semester-picker {
+    background: rgba(37,99,235,.04); border: 1px solid rgba(37,99,235,.14);
+    border-radius: var(--radius-sm); padding: .8rem 1rem; margin-bottom: .6rem;
+}
+.semester-picker-label {
+    display: flex; align-items: center; gap: .45rem;
+    font-size: .82rem; font-weight: 700; color: var(--text-1);
+}
+.semester-picker-hint { font-size: .74rem; color: var(--text-3); margin-top: .2rem; line-height: 1.5; }
+.semester-gate {
+    text-align: center; padding: 2rem 1.4rem 1.6rem;
+    background: var(--navy-card); border: 1px solid var(--navy-border);
+    border-radius: var(--radius-lg);
+}
+.semester-gate-icon {
+    width: 64px; height: 64px; margin: 0 auto .9rem;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: rgba(217,119,6,.13);
+}
+.semester-gate-title { font-size: 1.05rem; font-weight: 800; color: var(--text-1); margin-bottom: .4rem; }
+.semester-gate-text { font-size: .85rem; line-height: 1.7; color: var(--text-2); max-width: 620px; margin: 0 auto; }
+.course-semester-note {
+    display: flex; align-items: center; gap: .45rem;
+    font-size: .78rem; color: var(--text-2); line-height: 1.5;
+    background: var(--navy-card2); border: 1px solid var(--navy-border);
+    border-radius: var(--radius-sm); padding: .55rem .8rem; margin-bottom: .5rem;
+}
+
 .insight-card {
     background: var(--navy-card); border: 1px solid var(--navy-border);
     border-radius: var(--radius-lg); padding: 1.8rem 2rem; margin-bottom: 1.2rem;

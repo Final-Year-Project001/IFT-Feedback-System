@@ -418,6 +418,21 @@ SAFE_NAMES = {
     "components.py :: ^details_html$": "_show_result_dialog: built from "
                                        "esc(payload['details']) above",
 
+    # confirmation dialog (components._render_confirm_dialog). Same shape as the
+    # two entries above: each is a local assigned a few lines above the
+    # st.markdown, and is safe only because of what that assignment does.
+    #   rows_html     every label/value is esc()'d in the join comprehension
+    #   rating_html   star_row()'s in-repo SVG plus esc(int(rating))
+    #   warning_html  an i() glyph plus esc(warning_text)
+    # If any esc() is removed, these entries are the thing letting a
+    # student-typed field (a facilities location, for example) reach the modal.
+    "components.py :: ^rows_html$": "_render_confirm_dialog: joined from "
+                                    "esc(label)/esc(value) pairs",
+    "components.py :: ^rating_html$": "_render_confirm_dialog: star_row() SVG "
+                                      "(in-repo) plus an esc()'d int",
+    "components.py :: ^warning_html$": "_render_confirm_dialog: built from i() "
+                                       "and esc(warning_text)",
+
     "icons.py :: ^size$": "reassigned from _safe_attr(size, _SIZE_RE, '18') "
                          "two lines above — regex-validated",
     "icons.py :: ^color$": "reassigned from _safe_attr(color, _COLOR_RE, …)",
