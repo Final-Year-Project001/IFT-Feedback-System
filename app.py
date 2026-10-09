@@ -369,8 +369,13 @@ def _ensure_session_schema(conn) -> None:
             pass
 
 
-def _persist_session(username: str, payload: dict) -> None:
+def _persist_session(username: str, payload: dict) -> bool:
     """Writes this browser's auth state, keyed by its own token AND its cookie.
+
+    Returns True when a row for this browser exists afterwards, False when
+    nothing was written. The False paths matter: a sign-in landing on one
+    (no readable cookie yet — the iframe that writes it may not have run) must
+    be healable on a later run, and `main()` uses this return for exactly that.
 
     A no-op under AppTest, where query params and the websocket are both
     synthetic: there is no browser to keep signed in, and honouring the row
@@ -378,16 +383,16 @@ def _persist_session(username: str, payload: dict) -> None:
     subsequent `fresh()` that expects the login page.
     """
     if _is_test_run():
-        return
+        return False
     token = st.session_state.get(_SESSION_TOKEN_KEY, "")
     if not token:
-        return
+        return False
     client_id = st.session_state.get(_CLIENT_COOKIE, "")
     if not client_id or not _read_client_cookie():
         # No readable cookie on this browser, so there is nothing to bind the
         # row to. Writing it unbound would create exactly the session a shared
         # link can hijack, which is what this column exists to prevent.
-        return
+        return False
     now = time.time()
     try:
         conn = db.get_db()
@@ -407,7 +412,8 @@ def _persist_session(username: str, payload: dict) -> None:
     except Exception:
         # Persistence is a convenience. If it fails the app still works; the
         # user just signs in again after a refresh.
-        pass
+        return False
+    return True
 
 
 def _drop_token_from_url() -> None:
@@ -601,6 +607,21 @@ def _sidebar(user):
 
             _mail = email_status()
             _backend = "PostgreSQL" if db.active_backend() == "postgresql" else "SQLite (local file)"
+            # Whether Confirm/Cancel is the only way out of a modal depends on
+            # the installed Streamlit, not on this code: without `dismissible`
+            # support an outside click closes the dialog without running any
+            # button, and the pending action is re-offered next run. The person
+            # who can fix that (by upgrading) is the administrator reading this
+            # panel, so it says which semantics are in force. Students never see
+            # it; their modal behaves the same everywhere.
+            _dlg = st_compat.dialog_mode()
+            _dlg_line = (
+                "Confirm dialogs: exact-choice"
+                if _dlg == "exact-choice" else
+                "Confirm dialogs: dismissible (upgrade Streamlit for exact-choice)"
+                if _dlg == "dismissible" else
+                "Confirm dialogs: inline fallback (no st.dialog)"
+            )
             # Interpolated through esc() at the point of use. The static XSS gate
             # audits variable *names*, so it cannot see that this particular value
             # was escaped three lines above its assignment -- it only knows the
@@ -611,13 +632,13 @@ def _sidebar(user):
             if _mail["configured"]:
                 st.markdown(
                     f'<div class="sidebar-label">{i("check-circle", 12)} Deployment</div>'
-                    f'<div class="health-ok">Database: {esc(_backend)}<br>Email: configured</div>',
+                    f'<div class="health-ok">Database: {esc(_backend)}<br>Email: configured<br>{esc(_dlg_line)}</div>',
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
                     f'<div class="sidebar-label">{i("alert-triangle", 12)} Deployment</div>'
-                    f'<div class="health-ok">Database: {esc(_backend)}</div>'
+                    f'<div class="health-ok">Database: {esc(_backend)}<br>{esc(_dlg_line)}</div>'
                     f'<div class="health-bad">Email: not configured &mdash; password '
                     f'recovery is unavailable.<br>Missing: '
                     f'<code>{esc(", ".join(_mail["missing"]))}</code></div>',
@@ -706,6 +727,23 @@ def main():
 
     user = st.session_state["user"]
     username = st.session_state["username"]
+
+    # Heal a persist that never landed. `_persist_session` runs at sign-in, but
+    # it must skip when the browser's cookie is not readable yet — the iframe
+    # that writes it may not have executed on that exact run. Previously that
+    # miss was permanent: nothing ever retried, so every later refresh dropped
+    # the user on the login page until they signed in again. Retrying here,
+    # once per browser session, closes that hole: the first run with a readable
+    # cookie writes the row, the flag stops further writes, and a refresh wipes
+    # the flag so a genuinely missing row is rewritten rather than mourned.
+    # The binding is unchanged — a row is still only ever written when BOTH the
+    # URL token and the cookie are readable in this browser.
+    if not _is_test_run() and not st.session_state.get("_session_persist_ok"):
+        try:
+            if _persist_session(username, {"t": time.time()}):
+                st.session_state["_session_persist_ok"] = True
+        except Exception:
+            pass
 
     # A legacy unsalted-SHA256 account is signed in but not finished. Hold it
     # here, before the sidebar, so there is nothing to navigate to until the

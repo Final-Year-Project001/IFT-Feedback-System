@@ -48,6 +48,11 @@ _DOWNLOAD_BUTTON_SUPPORTS_ICON = _supports_kwarg(getattr(st, "download_button", 
 _TOAST_SUPPORTS_ICON = _supports_kwarg(getattr(st, "toast", None), "icon")
 _COLUMNS_SUPPORTS_VALIGN = _supports_kwarg(getattr(st, "columns", None), "vertical_alignment")
 _DIALOG_SUPPORTS_WIDTH = _supports_kwarg(getattr(st, "dialog", None), "width")
+# `st.dialog` grew `dismissible` after `width`; without it a modal can be
+# closed by clicking outside, which bypasses its buttons without running them.
+# The confirmation flow depends on every exit going through Confirm or Cancel,
+# so the deployment needs to know which semantics it got.
+_DIALOG_DISMISSIBLE = _supports_kwarg(getattr(st, "dialog", None), "dismissible")
 _CONTAINER_SUPPORTS_KEY = _supports_kwarg(getattr(st, "container", None), "key")
 
 # Kept for the module's own diagnostics; `_call` decides per target function
@@ -259,3 +264,21 @@ def dialog(title: str, width: str = "large", dismissible: bool | None = None):
         return wrapper
 
     return decorator
+
+
+def dialog_mode() -> str:
+    """Which confirmation semantics this deployment's Streamlit provides.
+
+    * `"exact-choice"` — a real modal that cannot be dismissed by clicking
+      outside it, so Confirm/Cancel is the only way out.
+    * `"dismissible"` — a real modal, but one an outside click or Esc can close
+      without running any button. The pending action is then re-offered on the
+      next interaction rather than lost, but the deployment should be upgraded
+      past this.
+    * `"inline"` — no `st.dialog` at all; confirmations render as bordered
+      containers with the same buttons. Nothing can be dismissed.
+    """
+    target = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None)
+    if target is None:
+        return "inline"
+    return "exact-choice" if _DIALOG_DISMISSIBLE else "dismissible"

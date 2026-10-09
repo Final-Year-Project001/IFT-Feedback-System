@@ -446,6 +446,17 @@ def _show_register():
                         "name": full_name.strip(), "role": "student",
                         "level": level_val, "email": email_clean,
                     }
+                    # Persist this sign-in exactly like a password sign-in does.
+                    # These keys alone keep the user signed in only until the
+                    # next refresh; without a `web_sessions` row the run after
+                    # a refresh finds no token to restore and drops the user on
+                    # the login page. `_establish_session` writes that row (and
+                    # sets the same keys), so a freshly registered student
+                    # survives a refresh the same way a returning one does. It
+                    # is a no-op where there is nothing to bind yet — same as
+                    # the sign-in path — never a failure.
+                    import app as _app_reg
+                    _app_reg._persist_session(username_clean, {"t": time.time()})
                     # Parked, not rendered here: anything queued on this run is
                     # discarded by the rerun, so a dialog (or st.success) opened
                     # now would flash and vanish. `render_parked_dialog()` in
