@@ -73,6 +73,7 @@ SUITES = [
     "test_analysis_modules.py",      # per-lecturer / course / facility rollups
     "test_chart_cards.py",           # charts sit in a card, and the trend is bars
     "test_dialog_close.py",          # every dismiss button must close its dialog
+    "test_decision_band.py",        # a card label must match the numbers beside it
     "test_user_management.py",
     "test_result_dialogs.py",
     "test_password_migration.py",    # do legacy hashes actually get upgraded?

@@ -288,6 +288,9 @@ SAFE_NAMES = {
     r"^tag_html$": "decision_insights.py: esc(t) per tag",
     r"^spread$": "decision_insights.py: built by joining esc()'d label and count "
                    "pairs, then interpolated whole",
+    r"^spread_note$": "decision_insights.py: every interpolated part is esc()'d "
+                      "at the point it is built, then inserted whole — escaping "
+                      "it again would double-encode the &ndash; entities",
     r"^sent_safe$": "feedback_form.py: esc()'d at its only assignment",
     r"^sent_colour$": "sentiment.label_color() — one of three hex literals, "
                          "returned from a fixed dict keyed by the closed label set",

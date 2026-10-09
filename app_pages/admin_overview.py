@@ -81,11 +81,9 @@ def show_admin_overview(session: str | None = None):
     section_header("trending-up", "Quick Charts")
     c1, c2 = st.columns(2)
     with c1:
-        chart_card("Rating Distribution", "bar-chart", make_rating_bar(df, ""),
-                   caption="How many submissions gave each star rating.")
+        chart_card("Rating Distribution", "bar-chart", make_rating_bar(df, ""))
     with c2:
-        chart_card("Category Overview", "radar", make_category_radar(df),
-                   caption="Average rating per category, on the same 1-5 scale.")
+        chart_card("Category Overview", "radar", make_category_radar(df))
 
     html_alert(
         "<strong>Advisory:</strong> Consult the <strong>Full Dashboard</strong> for granular analytics and "

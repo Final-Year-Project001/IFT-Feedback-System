@@ -152,11 +152,9 @@ def show_basic_stats(username, session: str | None = None):
 
     c1, c2 = st.columns(2)
     with c1:
-        chart_card("My Rating Distribution", "bar-chart", make_rating_bar(mine, ""),
-                   caption="How your own submissions were rated.")
+        chart_card("My Rating Distribution", "bar-chart", make_rating_bar(mine, ""))
     with c2:
-        chart_card("My Sentiment Breakdown", "smile", make_sentiment_pie(mine),
-                   caption="Your submissions by band. The band follows your rating.")
+        chart_card("My Sentiment Breakdown", "smile", make_sentiment_pie(mine))
 
     section_header("folder-open", "Submission History")
     # The header used to be opened inside a `<div class="data-table-wrap">` and

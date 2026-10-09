@@ -402,7 +402,7 @@ TEACHING_STAFF: list[dict] = [
     {"n": 11, "name": "Engr. Dr. Emeka M. Nwanga",    "key": "nwanga",      "rank": "Lecturer I",       "field": "Electrical Engineering"},
     {"n": 12, "name": "Dr. (Mrs.) N. Esomonyu",       "key": "esomonyu",    "rank": "Lecturer II",      "field": "Mathematics / Applied Mathematics"},
     {"n": 13, "name": "Dr. O. T. Okonkwo",            "key": "okonkwo",     "rank": "Lecturer II",      "field": "Computer Science"},
-    {"n": 14, "name": "Dr. (Mrs.) C. V. Mbamalu",     "key": "mbamalu",     "rank": "Lecturer II",      "field": "Computer Science"},
+    {"n": 14, "name": "Dr. (Mrs.) C. V. Mbamala",     "key": "mbamala",     "rank": "Lecturer II",      "field": "Computer Science"},
     {"n": 15, "name": "Dr. (Mrs.) Chika. N. John",   "key": "john",        "rank": "Lecturer II",      "field": "Mathematics / Information Management"},
     {"n": 16, "name": "Mr. C. S. Nwanjah",            "key": "nwanjah",     "rank": "Lecturer II",      "field": "Cyber Security / Software Engineering"},
     {"n": 17, "name": "Engr. I. H. Ajunwa",           "key": "ajunwa",      "rank": "Lecturer II",      "field": "Electrical Engineering / Information Management"},

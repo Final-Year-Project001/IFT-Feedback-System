@@ -101,7 +101,25 @@ check("every chart is rendered by chart_card, not bare",
 
 targets = Path("app_pages/targets.py").read_text(encoding="utf-8")
 check("chart_card is defined", "def chart_card(" in targets)
-check("chart_card draws its own plot", "plotly_chart" in targets.split("def chart_card(")[1][:1200])
+
+
+def _function_body(source: str, name: str) -> str:
+    """The source of one function, whatever its docstring says.
+
+    Slicing from the `def` to the next one and then taking the first N
+    characters was how this checked: `chart_card` gained a docstring explaining
+    why its caption parameter was removed, the body fell outside the window, and
+    the suite reported that the card had stopped drawing its plot.
+    """
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return ast.unparse(node)
+    return ""
+
+
+body = _function_body(targets, "chart_card")
+check("chart_card draws its own plot", "plotly_chart" in body, body[:200])
 
 # ══════════════════════════════════════════════════════════════════════
 section("3. The CSS hook is one Streamlit will really emit")

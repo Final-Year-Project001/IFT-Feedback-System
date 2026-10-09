@@ -24,6 +24,7 @@ from sentiment import analyze_sentiment, rating_label, label_color, normalize_ra
 from email_service import is_email_configured, send_submission_email, send_completion_email
 from components import (
     html_alert, html_metric, page_header, section_header, render_tag_list, star_row, esc,
+    park_result_dialog,
 )
 from icons import i, sentiment_icon, sentiment_color
 
@@ -355,6 +356,38 @@ def show_feedback_form(category, user, username, session: str | None = None):
     active_sess = session or CURRENT_SESSION
     page_header(meta["icon"], category, meta["desc"], badge_text=f"Feedback Submission · {active_sess} Session")
 
+    # ── Handle a confirmed submission from the parked dialog ─────────────
+    # The submit handler parked the payload in session_state and showed a
+    # confirmation dialog. When the user clicks "Yes, Submit", the dialog
+    # reruns the script and we land here with the pending data still in
+    # session_state. Execute the save now, then clear the pending state.
+    pending = st.session_state.pop("pending_submission", None)
+    if pending and pending.get("category") == category:
+        rating = pending["rating"]
+        s_res = analyze_sentiment(rating=rating)
+        ok, msg = save_data(category, {
+            "username": pending["username"],
+            "student_level": pending["level"],
+            "rating": rating,
+            "comment": "",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "additional_info": "",
+            "sentiment": s_res.label,
+            "sentiment_score": s_res.score,
+            "sentiment_engine": s_res.engine,
+            "sentiment_confidence": s_res.confidence,
+            "context_data": pending["context_data"],
+            "session": pending["active_sess"],
+        })
+        if ok:
+            _send_post_submission_emails(category, user, username, active_sess)
+            st.session_state["flash_message"] = msg
+            st.session_state["flash_scope"] = f"feedback:{category}"
+            st.session_state["just_submitted"] = category
+            st.rerun()
+        else:
+            html_alert(msg, "error")
+
     # A confirmation parked by the submit handler below. It is popped here
     # rather than on the login page, so a student who submits and is then
     # bounced to the portal does not see a stale "feedback submitted" banner
@@ -410,48 +443,29 @@ def show_feedback_form(category, user, username, session: str | None = None):
             if category == "Lecturer Teaching Style" and not context_data.get("lecturer_name"):
                 html_alert("Please choose the lecturer you wish to give feedback on.", "warning")
             else:
-                s_res = analyze_sentiment(rating=rating)
-                ok, msg = save_data(category, {
-                    "username": username, "student_level": user["level"], "rating": rating,
-                    "comment": "", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "additional_info": "", "sentiment": s_res.label,
-                    "sentiment_score": s_res.score,
-                    "sentiment_engine": s_res.engine,
-                    "sentiment_confidence": s_res.confidence,
+                # Park the intended submission; a confirmation dialog will
+                # ask the user to confirm before we actually write anything.
+                st.session_state["pending_submission"] = {
+                    "category": category,
+                    "rating": rating,
                     "context_data": context_data,
-                    "session": active_sess,
-                })
-                if ok:
-                    # The e-mails go out before the rerun, because a rerun
-                    # discards the rest of this script run.
-                    _send_post_submission_emails(category, user, username, active_sess)
-                    # Park the confirmation, then rerun so the page comes back
-                    # as the read-only "Submission Confirmed" view.
-                    #
-                    # Without this the form kept its values, so the student was
-                    # still looking at the editable form *and* the success alert
-                    # on the same screen, one click away from re-submitting.
-                    # The re-submission then failed with "You have already
-                    # submitted feedback for this category and academic
-                    # session" — a constraint enforced by a UNIQUE index the
-                    # student never saw, surfaced as if the save itself had
-                    # failed. Worse, the balloons had already celebrated a
-                    # submission that the second attempt rejected.
-                    #
-                    # The balloons are NOT called here: st.rerun() raises, so an
-                    # element queued on this run is discarded before it reaches
-                    # the browser. The flag below makes the confirmed view
-                    # celebrate on the run that actually survives.
-                    st.session_state["flash_message"] = msg
-                    st.session_state["flash_scope"] = f"feedback:{category}"
-                    st.session_state["just_submitted"] = category
-                    st.rerun()
-                else:
-                    # A real failure stays on the page with the form intact so
-                    # the comment is not lost and can be edited and retried.
-                    # html_alert escapes its message, so this is not
-                    # double-escaped.
-                    html_alert(msg, "error")
+                    "username": username,
+                    "level": user["level"],
+                    "active_sess": active_sess,
+                }
+                park_result_dialog(
+                    title="Confirm Submission",
+                    message=(
+                        "You are about to submit your feedback for "
+                        f"<strong>{category}</strong> with a rating of "
+                        f"<strong>{esc(rating)}/5</strong>.<br><br>"
+                        "<strong>⚠ Once submitted, this feedback cannot be edited "
+                        "or withdrawn.</strong> Please verify your rating before "
+                        "confirming."
+                    ),
+                    button_label="Yes, Submit",
+                )
+                st.rerun()
 
 
 def _send_post_submission_emails(category: str, user: dict, username: str, session_name: str = CURRENT_SESSION):

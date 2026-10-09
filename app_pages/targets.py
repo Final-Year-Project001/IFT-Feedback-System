@@ -76,12 +76,19 @@ def _card_key(title: str) -> str:
     return f"stChartCard{slug}"[:60]
 
 
-def chart_card(title: str, icon: str = "chart-bar", figure=None, caption: str = ""):
+def chart_card(title: str, icon: str = "chart-bar", figure=None):
     """Render a titled card containing one chart. Returns True if a chart drew.
 
+    There is no `caption` parameter. Every chart used to carry a sentence under
+    it explaining what the chart shows — "How many submissions gave each star
+    rating" beneath a chart of star ratings. Eight of those went on three
+    pages, and a line of text that restates its own title makes the page read
+    like a draft. The parameter is removed rather than left empty so the habit
+    does not come back one call site at a time.
+
     `figure=None` — which every builder here returns when there is not enough
-    data yet — still renders the card and the caption, so the page keeps its
-    shape instead of a section header appearing and then nothing under it.
+    data yet — still renders the card, with a placeholder, so the page keeps
+    its shape instead of a section header appearing and then nothing under it.
     """
     with st_compat.container(border=True, key=_card_key(title)):
         st.markdown(
@@ -97,11 +104,6 @@ def chart_card(title: str, icon: str = "chart-bar", figure=None, caption: str = 
         else:
             st.markdown(
                 '<div class="chart-card-empty">Not enough data to chart yet.</div>',
-                unsafe_allow_html=True,
-            )
-        if caption:
-            st.markdown(
-                f'<div class="chart-card-caption">{esc(caption)}</div>',
                 unsafe_allow_html=True,
             )
     return figure is not None

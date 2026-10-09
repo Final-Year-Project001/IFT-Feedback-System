@@ -302,31 +302,18 @@ def show_full_dashboard(session: str | None = None):
     section_header("trending-up", "Distribution & Overview")
     c1, c2 = st.columns(2)
     with c1:
-        chart_card("Overall Rating Distribution", "bar-chart",
-                   make_rating_bar(df, ""),
-                   caption="How many submissions gave each star rating.")
+        chart_card("Overall Rating Distribution", "bar-chart", make_rating_bar(df, ""))
     with c2:
-        chart_card("Category Overview", "radar",
-                   make_category_radar(df),
-                   caption="Average rating per category, on the same 1-5 scale.")
+        chart_card("Category Overview", "radar", make_category_radar(df))
 
     c3, c4 = st.columns(2)
     with c3:
-        chart_card("Sentiment Analysis", "smile",
-                   make_sentiment_pie(df),
-                   caption="The share of submissions in each band, decided by the rating.")
+        chart_card("Sentiment Analysis", "smile", make_sentiment_pie(df))
     with c4:
-        chart_card("By Student Level", "graduation-cap",
-                   make_level_pie(df),
-                   caption="Which levels are submitting.")
+        chart_card("By Student Level", "graduation-cap", make_level_pie(df))
 
     st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
-    chart_card(
-        "Rating Trend Over Time", "chart-bar", make_trend_bar(df),
-        caption="Daily average rating. One bar per day with submissions — a bar is "
-                "coloured by the band its average falls in, and a day nobody "
-                "answered is left as a gap rather than shown as a zero.",
-    )
+    chart_card("Rating Trend Over Time", "chart-bar", make_trend_bar(df))
 
     st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
     section_header("folder", "Per-Category Breakdown")

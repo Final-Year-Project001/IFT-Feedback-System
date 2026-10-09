@@ -394,6 +394,56 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     background: linear-gradient(135deg, rgba(37,99,235,.1), rgba(124,58,237,.08));
     box-shadow: 0 4px 14px rgba(37,99,235,.08);
 }
+
+/* ── The badge's two rows ──────────────────────────────────────────────────
+   A single flex row with `justify-content: space-between` put the pill hard
+   against the right edge of a 240px sidebar, so the engine name wrapped onto
+   a second line and the pill sat beside the gap. The rows are laid out
+   separately now, and the name is allowed to shrink rather than push the pill
+   out of the box.
+
+   `min-width: 0` on the name is load-bearing: without it a flex item refuses
+   to shrink below its content width, so the row overflows instead of wrapping
+   cleanly however much room the other element is given. */
+.engine-badge-head {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+
+.engine-badge-name {
+    font-weight: 700;
+    font-size: .72rem;
+    color: var(--text-1);
+    letter-spacing: .01em;
+    /* Shrinkable, so a long value truncates with an ellipsis rather than
+       displacing the tag. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.engine-badge-tag {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: .7rem;
+    font-weight: 700;
+    padding: .12rem .45rem;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, .08);
+    color: #2563eb;
+    border: 1px solid rgba(37, 99, 235, .2);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.engine-badge-bands {
+    font-size: .7rem;
+    color: var(--text-3);
+    margin-top: .4rem;
+    line-height: 1.5;
+}
 .engine-indicator-dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: #10b981;
@@ -2036,19 +2086,22 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
         flex-shrink: 0;
         animation: scrollHintBounce 1.8s var(--ease-standard) infinite;
     }
-    .login-hero {
-        flex-direction: column !important;
-        align-items: flex-start !important;
-        gap: 0.75rem !important;
-    }
-    .login-logo {
-        width: 60px !important;
-        height: 60px !important;
-    }
-    .login-title {
-        font-size: 1.6rem !important;
-        line-height: 1.2 !important;
-    }
+    /* Keep the logo and title side-by-side on mobile (the desktop arrangement)
+   instead of stacking them. The text is just small enough to fit beside the
+   icon at 360px viewport width. */
+.login-hero {
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.6rem !important;
+}
+.login-logo {
+    width: 52px !important;
+    height: 52px !important;
+}
+.login-title {
+    font-size: 1.35rem !important;
+    line-height: 1.25 !important;
+}
     .login-feature-grid {
         grid-template-columns: 1fr !important;
         gap: 0.6rem !important;
@@ -3325,12 +3378,62 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px);
 }
 
-/* ── the caption ───────────────────────────────────────────────────── */
-..chart-card-caption {
-    font-size: .74rem;
-    color: var(--text-3);
+/* ══════════════════════════════════════════════════════════════════════
+   THE BAND SPLIT
+   ── The Positive / Neutral / Negative counts on a category card.
+
+   These are the numbers the card's label is derived from. They sit directly
+   under the average for a reason: the average is the figure most likely to
+   mislead (one angry student and one delighted one average to an
+   unremarkable 3.5), and the three counts are what cannot mislead. Showing
+   them next to the percentage means the label can be checked at a glance
+   instead of being taken on trust.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.insight-split {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    margin-top: .7rem;
+}
+
+.insight-split-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .25rem .6rem;
+    border-radius: 999px;
+    font-size: .7rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.insight-split-pill strong {
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The note that appears only when the ratings genuinely disagree — both a
+   negative and a positive response in the same category. It states that the
+   average is not describing anybody, rather than leaving the reader to work
+   out why 3.5 sits next to "50% negative". */
+.insight-split-note {
+    display: flex;
+    align-items: flex-start;
+    gap: .5rem;
+    margin-top: .7rem;
+    padding: .6rem .75rem;
+    border-radius: 8px;
+    background: rgba(245, 158, 11, .06);
+    border: 1px solid rgba(245, 158, 11, .25);
+    font-size: .72rem;
     line-height: 1.5;
-    padding: .1rem 1.35rem 1.05rem;
+    color: var(--text-2);
+}
+
+.insight-split-note svg {
+    flex-shrink: 0;
+    margin-top: .12rem;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -3413,7 +3516,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
         transform: none !important;
     }
     .chart-card-head { padding: .85rem 1rem .7rem; }
-    .chart-card-caption { padding: 0 1rem .9rem; }
     .chart-card-empty { margin: .9rem 1rem; }
 }
 

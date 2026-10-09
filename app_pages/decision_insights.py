@@ -14,18 +14,39 @@ from db import (load_data, parse_context, context_text_list, load_admin_notes,
 from components import html_metric, page_header, section_header, empty_state, esc
 from icons import i
 
+_NEG_CRITICAL_PCT = 40.0   # at or above this share of negative ratings
+_NEG_ANY_PCT = 1.0         # any negative at all is worth surfacing
+_NEG_CRITICAL_MIN_N = 3    # responses required before "urgent" is claimed
+
+# The share alone is not enough to call something urgent, because the share is
+# very volatile at small numbers: two responses, one of them a 1, is 50% — the
+# same figure as fifty responses with twenty-five 1s. Declaring a departmental
+# emergency on one data point is the same error as declaring everything fine,
+# so `urgent` needs both a large share and a floor on the sample behind it.
+#
+# This is the only place a count is allowed to affect the band, and it can only
+# ever make a category *less* urgent than its share suggests, never more.
+
 PRIORITY_CONFIG = {
     "critical": {
         "color": "#ef4444", "bg": "rgba(239,68,68,.06)", "border": "rgba(239,68,68,.25)",
         "icon_bg": "rgba(239,68,68,.12)", "label": "Needs Urgent Action", "label_icon": "alert-triangle",
-        "rec": "Immediate administrative intervention required. Average rating indicates systemic student concerns; "
-               "direct student engagement and root-cause analysis recommended.",
+        "rec": f"At least {_NEG_CRITICAL_PCT:.0f}% of responses here were rated 1 or 2. "
+               "That is a level of dissatisfaction worth acting on directly.",
     },
     "warning": {
         "color": "#f59e0b", "bg": "rgba(245,158,11,.06)", "border": "rgba(245,158,11,.25)",
         "icon_bg": "rgba(245,158,11,.1)", "label": "Needs Attention", "label_icon": "alert-circle",
-        "rec": "Moderate student dissatisfaction detected. Review qualitative feedback and structured "
-               "responses below to target specific areas for operational enhancement.",
+        "rec": "Some students rated this negatively. Review the structured responses "
+               "below to see what specifically they objected to.",
+    },
+    # Not an alert. Nobody is unhappy; nobody is enthusiastic either. This is
+    # the case that previously fell through to `critical`.
+    "steady": {
+        "color": "#3b82f6", "bg": "rgba(59,130,246,.05)", "border": "rgba(59,130,246,.2)",
+        "icon_bg": "rgba(59,130,246,.1)", "label": "Neutral", "label_icon": "circle-dot",
+        "rec": "No negative ratings so far. Responses of 3 mean neutral on the 1-5 "
+               "scale, so this reads as unremarkable rather than unpopular.",
     },
     "good": {
         "color": "#10b981", "bg": "rgba(16,185,129,.04)", "border": "rgba(16,185,129,.2)",
@@ -57,9 +78,35 @@ CTX_REC_TEMPLATES = {
 # old single cut at 3.5 did exactly that: eight of nine categories rendered as
 # "Good" in a semester where the average was 2.6, because the comparison was
 # against an absolute number rather than against what the scale means.
-_GOOD_AT = 4.0
-_MIXED_AT = 3.3
+_POSITIVE_AT = 4.0
 
+# ── Why the mean cannot decide the label ────────────────────────────────────
+#
+# It used to: `>= 4.0 good`, `>= 3.3 warning`, below that `critical`. Two bugs
+# came out of that, and they are the same bug seen from opposite sides.
+#
+#   avg 3.0, 0% negative  ->  "Needs Urgent Action"
+#   avg 3.5, 50% negative ->  "Needs Attention"
+#
+# Both cards print a "Negative" percentage right next to the label, and that
+# percentage comes from the *distribution* while the label came from the
+# *mean*. The two could therefore disagree — the first card declares an
+# emergency with zero negative responses behind it, and on the second a mean
+# of 3.5 describes nobody at all: it is one angry student and one delighted
+# one averaged into a number that looks unremarkable.
+#
+# The mean is also not a decision input. It is one number built from two
+# opposed opinions, and every use it made here was a way of not looking at
+# either.
+#
+# So the label is read off the same counts the card displays. It is now
+# impossible for the label and the figure beside it to disagree, because there
+# is only one number and both are derived from it.
+#
+# The thresholds themselves are still not arbitrary: 1-2 is Negative and 4-5 is
+# Positive by the engine's definition, so a category is "critical" once enough
+# students have said something is wrong, and it cannot read "performing well"
+# while anybody in it is negative.
 # What to do about it, keyed on the evidence rather than on the average alone.
 # The average says a category is struggling; the structured answers say *what*,
 # and an administrator cannot act on the first without the second.
@@ -81,6 +128,16 @@ _PLAYBOOK = {
         "Re-check next session: the gap between this and the positive band is "
         "narrow, and a small change should close it.",
     ],
+    "steady": [
+        "Nobody has rated this negatively, so there is nothing to fix. Record it "
+        "as the baseline to compare against next session.",
+        "An average below 4.0 with no negative ratings means ratings of 3 — "
+        "neutral, not unhappy. Treat that as indifference rather than "
+        "dissatisfaction: the course is unremarkable, not disliked.",
+        "If it stays flat, ask what students would want covered. A neutral "
+        "rating from a student who had nothing to complain about is a different "
+        "signal from one who expected more.",
+    ],
     "good": [
         "No action needed. Document what is working so it survives a change of "
         "staff or of curriculum.",
@@ -91,12 +148,33 @@ _PLAYBOOK = {
 }
 
 
-def _band(avg: float) -> str:
-    if avg >= _GOOD_AT:
-        return "good"
-    if avg >= _MIXED_AT:
+def _band(neg_pct: float, avg: float, count: int = 99) -> str:
+    """The label for a category, read off the negative share.
+
+    `neg_pct` rather than the average, because that is the figure printed next
+    to the label on the card. One source, so the two cannot disagree.
+
+    `steady` is the band that was missing: no negative ratings, but nothing
+    strongly positive either. It previously fell through to `critical`, which
+    is how a category rated 3/5 by everybody it had heard from — which the
+    scale defines as Neutral — was flagged as an emergency.
+
+    `count` guards `urgent` only. See `_NEG_CRITICAL_MIN_N`.
+    """
+    if neg_pct >= 100:
+        # Unanimous. Two responses and both are 1-2 is not a volatile
+        # percentage, it is the clearest possible signal there is — so the
+        # sample-size floor below must not apply to it. Guarding it would mean
+        # a category every single student rated 1-2 only becomes urgent once
+        # three people had answered, which is backwards.
+        return "critical"
+    if neg_pct >= _NEG_CRITICAL_PCT and count >= _NEG_CRITICAL_MIN_N:
+        return "critical"
+    if neg_pct >= _NEG_ANY_PCT:
         return "warning"
-    return "critical"
+    if avg >= _POSITIVE_AT:
+        return "good"
+    return "steady"
 
 
 def _evidence_for(cat: str, sub: pd.DataFrame) -> list[tuple[str, int]]:
@@ -155,9 +233,19 @@ def show_decision_support(admin_username: str = "admin", session: str | None = N
     neg_total, pos_total = sentiments.eq("Negative").sum(), sentiments.eq("Positive").sum()
     neutral_total = total - neg_total - pos_total
     neg_pct_total = round(neg_total / total * 100, 1) if total else 0
-    health = "Excellent" if avg_all >= 4 else "Good" if avg_all >= 3.5 else "Needs Work"
-    health_icon = "heart" if avg_all >= 4 else "meh" if avg_all >= 3.5 else "alert-triangle"
-    health_accent = "green" if avg_all >= 4 else "gold"
+    # The system-wide verdict uses the same thresholds as every category card.
+    # It used to cut on the average alone (>= 4 Excellent, >= 3.5 Good, else
+    # Needs Work), which could report "Good" for a session that a third of
+    # students rated 1-2 — the same disagreement between mean and distribution
+    # that was fixed on the cards, in one place higher up.
+    health = ("Excellent" if neg_pct_total < _NEG_ANY_PCT and avg_all >= _POSITIVE_AT
+              else "Good" if neg_pct_total < _NEG_ANY_PCT
+              else "Mixed" if neg_pct_total < _NEG_CRITICAL_PCT
+              else "Needs Work")
+    health_icon = ("heart" if health == "Excellent" else "check-circle" if health == "Good"
+                   else "meh" if health == "Mixed" else "alert-triangle")
+    health_accent = ("green" if health in ("Excellent", "Good")
+                     else "gold" if health == "Mixed" else "purple")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1: html_metric("bar-chart", total, "Data Points", "blue")
@@ -183,9 +271,15 @@ def show_decision_support(admin_username: str = "admin", session: str | None = N
         if sub.empty:
             continue
         avg = sub["rating"].mean()
-        neg = sub["effective_sentiment"].eq("Negative").sum()
+        # `effective_sentiment`, not `rating`, so an administrator's correction
+        # is counted here too — the label below has to reflect what the row
+        # actually displays everywhere else on the page.
+        sentiments = sub["effective_sentiment"]
+        neg = int(sentiments.eq("Negative").sum())
+        pos = int(sentiments.eq("Positive").sum())
+        neu = int(len(sub) - neg - pos)
         neg_pct = neg / len(sub) * 100 if len(sub) else 0
-        priority = _band(avg)
+        priority = _band(neg_pct, avg, len(sub))
         students, levels = _reach(sub)
         # `context_data` is free-form JSON, not a constrained enum. See the note
         # on full_dashboard's identical block: `context_text_list` drops
@@ -200,13 +294,41 @@ def show_decision_support(admin_username: str = "admin", session: str | None = N
         counts = dict(_evidence_for(cat, sub))
         items.append({"cat": cat, "avg": round(avg, 2), "count": len(sub),
                       "neg_pct": round(neg_pct, 1), "priority": priority,
+                      "neg": neg, "neu": neu, "pos": pos,
                       "top_items": top_items, "evidence": counts,
                       "students": students, "levels": levels})
 
-    for item in sorted(items, key=lambda x: x["avg"]):
+    # Worst first, and within a band by the size of the negative share rather
+    # than by the average. Sorting by average is what put a 2-and-5 category
+    # (50% negative) below three neutral ones.
+    _BAND_ORDER = {"critical": 0, "warning": 1, "steady": 2, "good": 3}
+    for item in sorted(items,
+                       key=lambda x: (_BAND_ORDER[x["priority"]], -x["neg_pct"], x["avg"])):
         cfg = PRIORITY_CONFIG[item["priority"]]
-        neg_clr = "#ef4444" if item["neg_pct"] > 30 else "#f59e0b" if item["neg_pct"] > 15 else "#10b981"
+        neg_clr = ("#ef4444" if item["neg_pct"] >= _NEG_CRITICAL_PCT
+                   else "#f59e0b" if item["neg_pct"] >= _NEG_ANY_PCT else "#10b981")
         rating_clr = cfg["color"]
+
+        # ── When the average is not describing anybody ────────────────────
+        # A mean built from opposed ratings belongs to nobody. Two responses of
+        # 2 and 5 average to 3.5 — a number that looks unremarkable and
+        # describes neither student. The rating stays on the card, because
+        # omitting it would be hiding data, but the distribution is shown next
+        # to it so the average is read as what it is.
+        # Built already-escaped — every part is escaped where it is interpolated — so
+        # it is inserted whole. Escaping the assembled string on top would
+        # double-encode the `&ndash;` entities below, and the static XSS gate
+        # reads names rather than provenance, so it needs a justified entry
+        # either way (see SAFE_NAMES in test_xss_static.py).
+        spread_note = ""
+        if item["count"] >= 2 and item["neg"] > 0 and item["pos"] > 0:
+            spread_note = (
+                f'<div class="insight-split-note">'
+                f'{i("alert-circle", 14, cfg["color"])}'
+                f'<span>The {item["avg"]} average spans opposed opinions — '
+                f'{esc(item["neg"])} response{"" if item["neg"] == 1 else "s"} rated 1&ndash;2 and '
+                f'{esc(item["pos"])} rated 4&ndash;5. Read the split, not the mean.</span></div>'
+            )
 
         ctx_insight_html = ""
         if item["top_items"]:
@@ -282,6 +404,21 @@ def show_decision_support(admin_username: str = "admin", session: str | None = N
             f'<div class="insight-metric-label">Responses</div></div>'
             f'<div class="insight-metric"><div class="insight-metric-value" style="color:{neg_clr};">{item["neg_pct"]}%</div>'
             f'<div class="insight-metric-label">Negative</div></div></div>'
+            # The counts behind that percentage, so the label and the figure can
+            # be checked against each other without going back to the database.
+            # These three numbers are what the label is actually derived from.
+            f'<div class="insight-split">'
+            f'<span class="insight-split-pill" style="background:rgba(16,185,129,.08);'
+            f'border:1px solid rgba(16,185,129,.22);color:#059669;">'
+            f'{i("smile", 12, "#059669")} Positive <strong>{esc(item["pos"])}</strong></span>'
+            f'<span class="insight-split-pill" style="background:rgba(245,158,11,.08);'
+            f'border:1px solid rgba(245,158,11,.22);color:#d97706;">'
+            f'{i("meh", 12, "#d97706")} Neutral <strong>{esc(item["neu"])}</strong></span>'
+            f'<span class="insight-split-pill" style="background:rgba(239,68,68,.08);'
+            f'border:1px solid rgba(239,68,68,.22);color:#dc2626;">'
+            f'{i("frown", 12, "#dc2626")} Negative <strong>{esc(item["neg"])}</strong></span>'
+            f"</div>"
+            f"{spread_note}"
             f'<div class="insight-rec">{i("lightbulb", 16)}<span>{cfg["rec"]}</span></div>'
             f'<ul class="playbook-list">'
             + "".join(
@@ -329,8 +466,11 @@ def show_decision_support(admin_username: str = "admin", session: str | None = N
                 if existing.get("updated_at"):
                     st.caption(f"Last updated by {esc(existing.get('updated_by',''))} on {esc(existing.get('updated_at',''))}")
 
-    trend_text = "Positive Trend" if avg_all >= 3.5 else "Needs Improvement"
-    trend_icon = "trending-up" if avg_all >= 3.5 else "trending-down"
+    trend_text = ("Positive Trend" if neg_pct_total < _NEG_ANY_PCT and avg_all >= _POSITIVE_AT
+                else "Stable" if neg_pct_total < _NEG_CRITICAL_PCT
+                else "Declining")
+    trend_icon = ("trending-up" if trend_text == "Positive Trend"
+                  else "circle-dot" if trend_text == "Stable" else "trending-down")
     cats_monitored = len(items)
 
     st.markdown(

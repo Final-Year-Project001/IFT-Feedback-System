@@ -40,6 +40,12 @@ from app_pages.full_dashboard import show_full_dashboard
 from app_pages.decision_insights import show_decision_support
 from app_pages.user_management import show_user_management
 from sentiment import engine_status
+
+# The name shown on the sidebar badge. It used to be `ENGINE_NAME` verbatim —
+# `rating_threshold_engine` — which is a Python constant, not something to put
+# in front of a user: it reads as an error code and it is wide enough that the
+# pill beside it wrapped onto a second line in a 240px sidebar.
+ENGINE_BADGE_NAME = "Rating Engine"
 from components import esc, render_parked_dialog
 
 st.set_page_config(
@@ -429,14 +435,26 @@ def _restore_session() -> None:
     Re-reads the user from the `users` table rather than trusting the stored
     payload, so a deleted account cannot keep a session alive and a changed
     role takes effect immediately.
+
+    Reads the token from the URL and the client_id from the cookie directly,
+    because on a fresh render (page refresh) `st.session_state` is empty — it
+    is populated from these sources *during* this function, not before it.
     """
     if _is_test_run():
         return
-    token = st.session_state.get(_SESSION_TOKEN_KEY, "")
-    client_id = st.session_state.get(_CLIENT_COOKIE, "")
+    # On a fresh render, session_state is empty. Read the sources of truth:
+    # the token from the URL, and the client_id from the cookie.
+    try:
+        token = st.query_params.get(_SESSION_PARAM, "")
+    except Exception:
+        token = ""
+    client_id = _read_client_cookie()
+    # Mirror into session_state so downstream code in this run sees them.
+    st.session_state[_SESSION_TOKEN_KEY] = token
+    st.session_state[_CLIENT_COOKIE] = client_id
     if not token:
         return
-    if not client_id or not _read_client_cookie():
+    if not client_id:
         # A token with no readable cookie is either a brand-new browser or
         # somebody else's link. Neither may be restored, and the token is
         # discarded so it stops travelling through this browser's URLs.
@@ -632,11 +650,9 @@ def _sidebar(user):
         # The badge now states the rule that is actually applied.
         try:
             status = engine_status()
-            eng_label = status.get("active_engine", "rating_threshold_engine")
             bands = status.get("rating_thresholds", "1-2 Negative · 3 Neutral · 4-5 Positive")
             engine_ok = not status.get("engine_problems")
         except Exception:
-            eng_label = "rating_threshold_engine"
             bands = "1-2 Negative · 3 Neutral · 4-5 Positive"
             engine_ok = False
 
@@ -644,18 +660,13 @@ def _sidebar(user):
 
         st.markdown(
             f'<div class="sidebar-engine-badge">'
-            f'<div style="display:flex;align-items:center;justify-content:space-between;">'
-            f'<div style="display:flex;align-items:center;gap:.45rem;">'
-            f'<span class="engine-indicator-dot" style="background:{engine_dot_color};box-shadow:0 0 8px {engine_dot_color};"></span>'
-            f'<span style="font-weight:700;font-size:.72rem;color:var(--text-1);">{esc(eng_label)}</span>'
+            f'<div class="engine-badge-head">'
+            f'<span class="engine-indicator-dot" style="background:{engine_dot_color};'
+            f'box-shadow:0 0 8px {engine_dot_color};"></span>'
+            f'<span class="engine-badge-name">{esc(ENGINE_BADGE_NAME)}</span>'
+            f'<span class="engine-badge-tag">1&ndash;5</span>'
             f'</div>'
-            f'<span style="font-size:.62rem;font-weight:700;padding:.1rem .45rem;border-radius:999px;'
-            f'background:rgba(37,99,235,.08);color:#2563eb;border:1px solid rgba(37,99,235,.2);">'
-            f'3 bands</span>'
-            f'</div>'
-            f'<div style="font-size:.61rem;color:var(--text-3);margin-top:.35rem;line-height:1.45;">'
-            f'{esc(bands)}'
-            f'</div>'
+            f'<div class="engine-badge-bands">{esc(bands)}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
