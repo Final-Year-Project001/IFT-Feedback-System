@@ -1274,7 +1274,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .insight-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.2rem; flex-wrap: wrap; gap:.6rem; }
 .insight-header-left { display: flex; align-items: center; gap: .85rem; }
 .insight-title { font-size: 1.05rem; font-weight: 700; color: var(--text-1); }
-.insight-metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 1.2rem; margin-bottom: 1.2rem; }
+.insight-metrics { 
+    display: grid; 
+    gap: 1rem; 
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); 
+    margin-bottom: 1.2rem; 
+}
 .insight-metric { background: rgba(15,23,42,.025); border: 1px solid var(--navy-border); border-radius: var(--radius-sm); padding: .9rem 1rem; text-align: center; }
 .insight-metric-value { font-size: 1.4rem; font-weight: 800; line-height: 1; margin-bottom: .3rem; }
 .insight-metric-label { font-size: var(--fs-2xs); color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
@@ -1286,21 +1291,28 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 
 .cat-breakdown-row {
-    display: flex; align-items: center; padding: 1rem 1.2rem; margin-bottom: .6rem;
-    border-radius: var(--radius-sm); background: rgba(15,23,42,.02);
-    border: 1px solid var(--navy-border); transition: background-color, border-color, box-shadow, color, fill, stroke, opacity, transform var(--dur-2) ease;
+    display: grid;
+    grid-template-columns: 52px 1fr auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 1rem 1.2rem;
+    margin-bottom: 0.6rem;
+    border-radius: var(--radius-sm);
+    background: rgba(15,23,42,.02);
+    border: 1px solid var(--navy-border);
+    transition: background-color, border-color, box-shadow, color, fill, stroke, opacity, transform var(--dur-2) ease;
 }
 .cat-breakdown-row:hover { background: rgba(59,130,246,.04); border-color: rgba(59,130,246,.2); transform: translateX(4px); }
 .cat-breakdown-icon-wrap {
     width: 40px; height: 40px; border-radius: 11px;
     background: linear-gradient(135deg, rgba(59,130,246,.12), rgba(139,92,246,.08));
     border: 1px solid rgba(59,130,246,.15);
-    display: flex; align-items: center; justify-content: center; margin-right: 1rem; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.cat-breakdown-info { flex: 1; }
+.cat-breakdown-info { min-width: 0; }
 .cat-breakdown-name { font-size: .92rem; font-weight: 700; color: var(--text-1); }
 .cat-breakdown-count { font-size: .72rem; color: var(--text-3); margin-top: .15rem; }
-.cat-breakdown-stats { text-align: right; }
+.cat-breakdown-stats { text-align: right; min-width: 120px; }
 .cat-breakdown-rating { font-size: .95rem; font-weight: 800; color: var(--gold-text); }
 .cat-breakdown-sent { font-size: .7rem; font-weight: 700; margin-top: .1rem; display:flex; align-items:center; gap:.25rem; justify-content:flex-end; }
 
@@ -1594,7 +1606,61 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(3px); }
 }
-.login-feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-bottom: 1.6rem; }
+/* ══════════════════════════════════════════════════════════════════════
+   ADAPTIVE GRID UTILITIES
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Base adaptive grid — items never smaller than 240px, grow to fill space.
+   Usage: .adaptive-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } */
+.adaptive-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+/* Tighter adaptive grid for compact cards — minimum 200px */
+.adaptive-grid-compact {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+/* 3-column adaptive grid for metrics — collapses to 2 then 1 on narrow viewports */
+.adaptive-metrics-3 {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+/* 4-column adaptive grid for engine stats — collapses gracefully */
+.adaptive-metrics-4 {
+    display: grid;
+    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+/* Feature card grid — 2 columns on desktop, 1 on mobile */
+.adaptive-features {
+    display: grid;
+    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+/* Preview card grid — 3 columns on wide, 2 on medium, 1 on narrow */
+.adaptive-preview {
+    display: grid;
+    gap: 0.65rem;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+
+.login-feature-grid {
+    display: grid;
+    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    margin-bottom: 1.6rem;
+}
 .login-feature-card {
     background: #ffffff; border: 1px solid var(--navy-border2);
     border-radius: 14px; padding: 1.1rem 1.15rem;
@@ -1617,8 +1683,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 /* ── Decorative Dashboard Preview (Exact Reference UI) ── */
 .login-preview-card {
     display: grid;
-    grid-template-columns: 2.1fr 1.4fr 1.15fr;
     gap: 0.65rem;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     background: var(--navy-card2);
     border: 1px solid var(--navy-border);
     border-radius: 16px;
@@ -2047,6 +2113,22 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     }
     .cat-breakdown-row {
         padding: 0.9rem 1rem !important;
+        grid-template-columns: 1fr !important;
+        gap: 0.75rem !important;
+    }
+    .cat-breakdown-icon-wrap {
+        margin: 0 auto !important;
+    }
+    .cat-breakdown-stats {
+        text-align: left !important;
+        min-width: 0 !important;
+        display: flex !important;
+        gap: 1rem !important;
+        justify-content: flex-start !important;
+        flex-wrap: wrap !important;
+    }
+    .cat-breakdown-sent {
+        justify-content: flex-start !important;
     }
     /* The two `overflow-x: auto` overrides that used to live here targeted
        `.data-table-wrap`, which no longer exists and never wrapped the table.
@@ -2382,8 +2464,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 .engine-metrics-row {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     margin-bottom: 1rem;
 }
 .engine-metric-box {
@@ -2418,8 +2500,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 .engine-trained-row {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: .8rem;
+    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     background: rgba(5,150,105,.04);
     border: 1px solid rgba(5,150,105,.15);
     border-radius: var(--radius-sm);
