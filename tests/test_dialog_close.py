@@ -171,9 +171,11 @@ section("3. The specific case that was reported")
 # ══════════════════════════════════════════════════════════════════════
 
 comp = Path("components.py").read_text(encoding="utf-8")
-body = comp.split("def _show_result_dialog")[1]
+# The dialog is now a top-level function `_render_result_dialog` (not nested
+# inside another function), so Streamlit can reliably register it.
+body = comp.split("def _render_result_dialog")[1]
 
-check("the result dialog exists", "def _show_result_dialog" in comp)
+check("the result dialog exists", "def _render_result_dialog" in comp)
 check("its dismiss button is now guarded by an `if`",
       re.search(r"if\s+st_compat\.button\(", body) is not None
       or re.search(r"if\s+st\.button\(", body) is not None,

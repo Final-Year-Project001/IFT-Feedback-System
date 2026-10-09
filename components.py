@@ -66,6 +66,16 @@ def html_alert(msg: str, kind: str = "info", icon_name: str | None = None, raw: 
 # redirect. `park_result_dialog` is that storage; `render_parked_dialog` is the
 # re-render, and it pops the payload so a later refresh cannot resurrect a
 # dialog the user already dismissed.
+#
+# The dialog itself is a TOP-LEVEL function decorated with `st.dialog`. Streamlit
+# registers dialogs at decoration time, so the decorated function must be at
+# module scope, not nested inside another function. The payload is read from
+# session_state inside the dialog body.
+#
+# Two payload keys are used:
+#   "_pending_result_dialog" — parked for the NEXT run (park/render pattern)
+#   "_dialog_payload" — for immediate display (result_dialog)
+# Both are transferred to "_dialog_payload" before the dialog is invoked.
 
 _RESULT_DIALOG_KEY = "_pending_result_dialog"
 
@@ -77,13 +87,67 @@ _DIALOG_ICON = {
 }
 
 
+# ── Top-level result dialog ──────────────────────────────────────────────
+#
+# Streamlit's `st.dialog` decorator must be applied to a top-level function.
+# The dialog reads its payload from session_state, which is populated by
+# `park_result_dialog` (for deferred display) or `result_dialog` (for immediate
+# display). The dialog function itself is stateless — it just renders whatever
+# is in the payload key.
+#
+# The payload is a dict with keys: message, kind, title, details, button_label.
+# It is stored under "_dialog_payload" by the parking/rendering functions.
+
+@st_compat.dialog("Confirm Action", width="small")
+def _render_result_dialog():
+    """Renders the result dialog from the payload in session_state."""
+    payload = st.session_state.get("_dialog_payload")
+    if not payload:
+        return
+
+    kind = payload["kind"]
+    icon = _DIALOG_ICON.get(kind, "info")
+    message = esc(payload["message"])
+    details_html = (
+        f'<div class="result-dialog-details">{esc(payload["details"])}</div>'
+        if payload.get("details") else ""
+    )
+    # The dynamic title goes in the body as a header, since st.dialog title
+    # is fixed at decoration time.
+    title = esc(payload["title"]) if payload.get("title") else ""
+
+    st.markdown(
+        f'<div class="result-dialog result-dialog-{kind}">'
+        f'<div class="result-dialog-icon">{i(icon, 30)}</div>'
+        f'<div class="result-dialog-body">'
+        f'{f"<div class=\"result-dialog-title\">{title}</div>" if title else ""}'
+        f'{message}'
+        f"{details_html}"
+        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+    if st_compat.button(
+        payload.get("button_label") or "Continue",
+        type="primary",
+        use_container_width=True,
+        key="_result_dialog_ok",
+    ):
+        # Clear the payload so the dialog doesn't reopen on the next run.
+        st.session_state.pop("_dialog_payload", None)
+        st.rerun()
+
+
+# ── Park / render helpers ────────────────────────────────────────────────
+
 def park_result_dialog(message: str, kind: str = "success", title: str | None = None,
                        details: str | None = None, button_label: str = "Continue"):
     """Stores a result dialog to be shown on the NEXT run.
 
     Call this immediately before the `st.rerun()` that follows the action. The
     dialog is deliberately not opened here: anything rendered on this run is
-    discarded by the rerun, so the modal would flash and vanish.
+    discarded by the `st.rerun()` that follows it, so the modal would flash and vanish.
     """
     st.session_state[_RESULT_DIALOG_KEY] = {
         "message": message,
@@ -101,13 +165,14 @@ def result_dialog(message: str, kind: str = "success", title: str | None = None,
     Use this when no `st.rerun()` is going to follow. If one is, park it with
     `park_result_dialog` instead — see that function's note.
     """
-    _show_result_dialog({
+    st.session_state["_dialog_payload"] = {
         "message": message,
         "kind": kind if kind in _DIALOG_ICON else "info",
         "title": title,
         "details": details,
         "button_label": button_label,
-    })
+    }
+    _render_result_dialog()
 
 
 def render_parked_dialog() -> bool:
@@ -120,47 +185,9 @@ def render_parked_dialog() -> bool:
     payload = st.session_state.pop(_RESULT_DIALOG_KEY, None)
     if not payload:
         return False
-    _show_result_dialog(payload)
+    st.session_state["_dialog_payload"] = payload
+    _render_result_dialog()
     return True
-
-
-def _show_result_dialog(payload: dict):
-    """Renders one dialog body + dismiss button."""
-    kind = payload["kind"]
-    icon = _DIALOG_ICON[kind]
-    message = esc(payload["message"])
-    details_html = (
-        f'<div class="result-dialog-details">{esc(payload["details"])}</div>'
-        if payload["details"] else ""
-    )
-    title = esc(payload["title"]) if payload["title"] else message
-
-    @st_compat.dialog(title, width="small")
-    def _dlg():
-        st.markdown(
-            f'<div class="result-dialog result-dialog-{kind}">'
-            f'<div class="result-dialog-icon">{i(icon, 30)}</div>'
-            f'<div class="result-dialog-body">{message}</div>'
-            f"{details_html}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
-        # The button's result was discarded, so pressing it did nothing at all:
-        # the dialog stayed open and the user had to click outside it. A
-        # `st.dialog` only closes when the run that opened it is abandoned —
-        # the documented way to do that is `st.rerun()` inside the dialog body,
-        # which ends this run before the decorator can re-open the modal on the
-        # next one. Every dismiss button here now does that.
-        if st_compat.button(
-            payload["button_label"] or "Continue",
-            type="primary",
-            use_container_width=True,
-            key="_result_dialog_ok",
-        ):
-            st.rerun()
-
-    _dlg()
 
 
 def html_metric(icon_name: str, value, label: str, accent: str = ""):
