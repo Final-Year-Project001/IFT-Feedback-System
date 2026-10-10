@@ -1880,10 +1880,13 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     justify-content: center;
     align-items: center;
     margin: 0.15rem 0 0.25rem 0;
+    /* Fills the tile's leftover height so the donut sits optically centred
+       against the taller bars tile beside it, instead of hugging the top. */
+    flex: 1;
 }
 .sentiment-donut-pie {
-    width: 62px;
-    height: 62px;
+    width: 88px;
+    height: 88px;
     border-radius: 50%;
     background: conic-gradient(#10b981 0% 68%, #f59e0b 68% 86%, #ef4444 86% 100%);
     display: flex;
@@ -1891,8 +1894,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     justify-content: center;
 }
 .sentiment-donut-hole {
-    width: 40px;
-    height: 40px;
+    width: 54px;
+    height: 54px;
     border-radius: 50%;
     background: #ffffff;
     display: flex;
@@ -1901,37 +1904,10 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     justify-content: center;
 }
 .donut-center-val {
-    font-size: 0.82rem;
+    font-size: 1rem;
     font-weight: 800;
     color: #0f172a;
     line-height: 1;
-}
-.sentiment-mini-legend {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    width: 100%;
-    margin-top: auto;
-    padding-top: 0.3rem;
-    border-top: 1px solid var(--navy-border);
-}
-.legend-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: #64748b;
-    font-weight: 500;
-}
-.legend-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-}
-.legend-value {
-    font-weight: 700;
-    color: #0f172a;
-    font-size: 0.7rem;
 }
 .sentiment-legend {
     display: flex;
