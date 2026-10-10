@@ -252,6 +252,10 @@ check("there is no token-only lookup left to fall back on",
       "a token-only query is exactly the shared-link hole")
 check("when the secret is not known yet, the run waits instead of trusting"
       " the token", "st.stop()" in restore_src and "waits < 3" in restore_src)
+check("...but only when a row actually claims the token (no deadlock)",
+      "if not pending:" in restore_src
+      and "SELECT 1 FROM web_sessions WHERE token = ?" in restore_src,
+      "waiting on a token with no row freezes a sign-out on 'Restoring…'")
 check("...and after waiting, an unknown secret still restores nothing",
       "if not client_id:" in restore_src)
 check("the token is dropped only when it provably belongs to another browser",

@@ -153,6 +153,10 @@ section("3c. Sign-out leaves no stale token behind")
 check("signing out drops the URL token as well as the row",
       "_drop_token_from_url()" in app_src.split("Sign Out")[1][:1200]
       if "Sign Out" in app_src else False)
+_signout_src = app_src.split("Sign Out")[1][:1600] if "Sign Out" in app_src else ""
+check("...and keeps the browser secret across the session_state clear",
+      "st.session_state.clear()" in _signout_src and "_CLIENT_ID_KEY" in _signout_src,
+      "clearing the secret strands the next run on a 'Restoring…' screen")
 _login_src = Path("app_pages/login.py").read_text(encoding="utf-8")
 check("the login page carries no restore banner",
       "_restore_note" not in _login_src, "banner removed by request")
@@ -331,11 +335,24 @@ with open(PROBE_RESTORE, "w", encoding="utf-8") as fh:
         "st.session_state[appmod._IDENTITY_WAITS_KEY] = 3\n"
         "appmod._restore_session()\n"
         "unknown_signed_in = st.session_state.get('password_correct') is True\n"
+        # Case D: the secret is unknown AND no row claims the token -- a token a
+        # sign-out or a fresh login page just minted. Restore must return at
+        # once, not stop and wait, or the page hangs on 'Restoring…'. If it did
+        # stop, the line below never runs and probe_out is never set.
+        "_reset()\n"
+        "st.query_params[appmod._SESSION_PARAM] = 'never-any-row-token'\n"
+        "st.session_state[appmod._CLIENT_ID_KEY] = ''\n"
+        "st.session_state.pop(appmod._IDENTITY_WAITS_KEY, None)\n"
+        "appmod._restore_session()\n"
+        "reached_after_no_row = True\n"
+        "no_row_signed_in = st.session_state.get('password_correct') is True\n"
         "st.session_state['probe_out'] = {\n"
         "    'own': own,\n"
         "    'receiver_signed_in': receiver_signed_in,\n"
         "    'borrowed_token_dropped': borrowed_token_dropped,\n"
         "    'unknown_signed_in': unknown_signed_in,\n"
+        "    'reached_after_no_row': reached_after_no_row,\n"
+        "    'no_row_signed_in': no_row_signed_in,\n"
         "}\n"
     )
 
@@ -351,6 +368,9 @@ check("...and the borrowed token is dropped from the address bar",
       out2.get("borrowed_token_dropped") is True, out2)
 check("...a not-yet-known secret fails closed instead of trusting the token",
       out2.get("unknown_signed_in") is not True, out2)
+check("...and a token with no row returns at once instead of waiting",
+      out2.get("reached_after_no_row") is True
+      and out2.get("no_row_signed_in") is not True, out2)
 check("no exception in the restore path",
       not list(at2.exception), [str(e.value)[:120] for e in at2.exception])
 

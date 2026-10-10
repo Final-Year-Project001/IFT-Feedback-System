@@ -543,6 +543,26 @@ def _restore_session() -> None:
     # wait a couple of runs for that report instead of trusting the token alone.
     client_id = st.session_state.get(_CLIENT_ID_KEY, "")
     if not client_id:
+        # The secret is unknown on this run (a fresh page load: the component
+        # reports on its own rerun). Before making the page wait for that
+        # report, settle the question the wait exists FOR: could this token
+        # restore at all? If no row claims it — a token this very page load just
+        # minted on its way to the login form, or one left behind by a sign-out
+        # — then the answer is no whatever the secret turns out to be, and
+        # waiting would only freeze the page. That freeze is exactly what a
+        # sign-out used to produce: the secret was cleared, a fresh token was
+        # minted, and restore sat on "Restoring your session…" forever because
+        # nothing ever triggered the rerun the wait was counting on.
+        try:
+            conn = db.get_db()
+            _ensure_session_schema(conn)
+            pending = conn.execute(
+                "SELECT 1 FROM web_sessions WHERE token = ?", (token,)
+            ).fetchone()
+        except Exception:
+            pending = None
+        if not pending:
+            return
         waits = int(st.session_state.get(_IDENTITY_WAITS_KEY, 0) or 0)
         if waits < 3:
             st.session_state[_IDENTITY_WAITS_KEY] = waits + 1
@@ -756,7 +776,16 @@ def _sidebar(user):
             # and earn a "please sign in again" hint for a sign-out the user
             # chose deliberately.
             _drop_token_from_url()
+            # Clearing session_state signs the user out, but it must not also
+            # forget WHICH BROWSER this is: that secret is not auth state, and
+            # losing it left the next run unable to tell a freshly-minted token
+            # from a borrowed one, so it stopped on "Restoring your session…".
+            # Carry it across the clear, like a device identity rather than a
+            # credential.
+            _client_secret = st.session_state.get(_CLIENT_ID_KEY, "")
             st.session_state.clear()
+            if _client_secret:
+                st.session_state[_CLIENT_ID_KEY] = _client_secret
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
