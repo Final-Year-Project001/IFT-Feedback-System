@@ -3887,20 +3887,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     gap: .25rem;
 }
 
-/* Sidebar institutional department tag */
-.sidebar-dept-tag {
-    font-size: var(--fs-2xs);
-    font-weight: 700;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    color: var(--blue-text);
-    margin-top: .4rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: .3rem;
-}
-
 /* Action plan matrix table in Decision Insights */
 .action-matrix-card {
     background: var(--navy-card);

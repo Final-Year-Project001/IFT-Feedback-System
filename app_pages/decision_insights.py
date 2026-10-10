@@ -2,6 +2,7 @@
 
 from collections import Counter
 from datetime import datetime
+from xml.sax.saxutils import escape as _xml_escape
 
 import pandas as pd
 import streamlit as st
@@ -202,6 +203,172 @@ def _reach(sub: pd.DataFrame) -> tuple[int, int]:
     students = {str(u).strip().lower() for u in sub.get("username", []) if str(u).strip()}
     levels = {str(v).strip() for v in sub.get("student_level", []) if str(v).strip()}
     return len(students), len(levels)
+
+
+def _briefing_rows(items, notes) -> list[dict]:
+    """One plain-data row per category for the briefing exporters below.
+
+    Both the Markdown and the PDF builders read from here, so the two files
+    can never disagree about the numbers — the only difference between them
+    is presentation. Everything returned is plain data (no markup), and the
+    PDF builder escapes it for reportlab's XML-ish paragraphs at render time.
+    """
+    rows = []
+    for it in items or []:
+        cat = it.get("cat", "")
+        cfg = PRIORITY_CONFIG.get(it.get("priority"), {})
+        rows.append({
+            "cat": cat,
+            "priority": cfg.get("label", it.get("priority", "")),
+            "avg": it.get("avg", "—"),
+            "count": it.get("count", 0),
+            "students": it.get("students", 0),
+            "levels": it.get("levels", 0),
+            "pos": it.get("pos", 0),
+            "neu": it.get("neu", 0),
+            "neg": it.get("neg", 0),
+            "neg_pct": it.get("neg_pct", 0),
+            "evidence": ", ".join(it.get("top_items") or []) or "None flagged",
+            "directive": (notes.get(cat, {}) or {}).get("note")
+                         or "No action directive recorded.",
+        })
+    return rows
+
+
+def _build_briefing_md(*, session_label: str, generated_on: str, health: str,
+                       avg_all, total, neg_pct_total, items, notes) -> str:
+    """The briefing as Markdown text (also the no-reportlab fallback)."""
+    md = (
+        f"# Federal University of Technology, Owerri (FUTO)\n"
+        f"## Department of Information Technology (IFT)\n"
+        f"### Executive Academic Feedback & Decision Briefing\n\n"
+        f"**Academic Session:** {session_label}  \n"
+        f"**Generated On:** {generated_on}  \n"
+        f"**Overall System Health:** {health}  \n"
+        f"**Departmental Average Rating:** {avg_all} / 5.0  \n"
+        f"**Total Student Feedback Submissions:** {total}  \n"
+        f"**Negative Feedback Share:** {neg_pct_total}%  \n\n"
+        f"---\n\n"
+        f"### Category Assessments & Action Plan Matrix\n\n"
+    )
+    for row in _briefing_rows(items, notes):
+        md += (
+            f"#### {row['cat']}\n"
+            f"- **Priority Status:** {row['priority']}\n"
+            f"- **Rating Score:** {row['avg']}/5.0 across {row['count']} submissions "
+            f"({row['students']} students, {row['levels']} levels)\n"
+            f"- **Sentiment Split:** Positive: {row['pos']} | Neutral: {row['neu']} | "
+            f"Negative: {row['neg']} ({row['neg_pct']}%)\n"
+            f"- **Key Feedback Evidence:** {row['evidence']}\n"
+            f"- **Departmental Action Directive:** {row['directive']}\n\n"
+        )
+    return md
+
+
+def _build_briefing_pdf(*, session_label: str, generated_on: str, health: str,
+                        avg_all, total, neg_pct_total, items, notes) -> bytes | None:
+    """The briefing as a print-ready PDF, or None when reportlab is absent.
+
+    reportlab is a declared dependency, so None only happens on a stale
+    install — in which case the caller serves the Markdown instead of a dead
+    button. Returns raw PDF bytes otherwise. All dynamic text goes through
+    `_xml_escape`: admin directives and course names are free text, and an
+    unescaped `&` or `<` in either would corrupt the whole document (or worse,
+    smuggle markup into a file the board will open).
+    """
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                        Table, TableStyle)
+    except ImportError:
+        return None
+
+    import io as _io
+
+    navy = colors.HexColor("#0f172a")
+    slate = colors.HexColor("#475569")
+    light = colors.HexColor("#f1f5f9")
+    thin = colors.HexColor("#cbd5e1")
+
+    title = ParagraphStyle("Title2", fontName="Helvetica-Bold", fontSize=17,
+                           leading=21, textColor=navy, spaceAfter=2)
+    subtitle = ParagraphStyle("Sub2", fontName="Helvetica-Bold", fontSize=11,
+                              leading=14, textColor=navy, spaceBefore=10,
+                              spaceAfter=4)
+    body = ParagraphStyle("Body2", fontName="Helvetica", fontSize=9,
+                          leading=12.5, textColor=colors.black, spaceAfter=3)
+    meta = ParagraphStyle("Meta2", fontName="Helvetica", fontSize=9,
+                          leading=12.5, textColor=slate, spaceAfter=1)
+    cell = ParagraphStyle("Cell2", fontName="Helvetica", fontSize=8,
+                          leading=10.5, textColor=colors.black)
+    cell_h = ParagraphStyle("CellH2", fontName="Helvetica-Bold", fontSize=8,
+                            leading=10.5, textColor=colors.white)
+
+    def tx(value) -> str:
+        return _xml_escape("" if value is None else str(value))
+
+    story = [
+        Paragraph(tx("Federal University of Technology, Owerri (FUTO)"), title),
+        Paragraph(tx("Department of Information Technology (IFT) — "
+                     "Executive Academic Feedback & Decision Briefing"), subtitle),
+        Paragraph(tx(f"Academic Session: {session_label}  ·  Generated: {generated_on}"),
+                  meta),
+        Paragraph(tx(f"Overall Health: {health}  ·  Average Rating: {avg_all} / 5.0  ·  "
+                     f"Submissions: {total}  ·  Negative Share: {neg_pct_total}%"),
+                  meta),
+        Spacer(1, 6),
+    ]
+
+    rows = _briefing_rows(items, notes)
+    table_data = [[Paragraph("<b>Category</b>", cell_h),
+                   Paragraph("<b>Priority</b>", cell_h),
+                   Paragraph("<b>Avg / 5</b>", cell_h),
+                   Paragraph("<b>n</b>", cell_h),
+                   Paragraph("<b>Neg %</b>", cell_h)]]
+    for row in rows:
+        table_data.append([Paragraph(tx(row["cat"]), cell),
+                           Paragraph(tx(row["priority"]), cell),
+                           Paragraph(tx(row["avg"]), cell),
+                           Paragraph(tx(row["count"]), cell),
+                           Paragraph(tx(row["neg_pct"]), cell)])
+    summary = Table(table_data, colWidths=[150, 130, 55, 45, 55], repeatRows=1)
+    summary.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.6, thin),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, light]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story += [summary, Spacer(1, 8)]
+
+    for row in rows:
+        story.append(Paragraph(tx(row["cat"]), subtitle))
+        story.append(Paragraph(
+            tx(f"Priority: {row['priority']}  ·  Rating: {row['avg']}/5.0 across "
+               f"{row['count']} submissions ({row['students']} students, "
+               f"{row['levels']} levels)"), body))
+        story.append(Paragraph(
+            tx(f"Sentiment — Positive: {row['pos']} · Neutral: {row['neu']} · "
+               f"Negative: {row['neg']} ({row['neg_pct']}%)"), body))
+        story.append(Paragraph(tx(f"Key evidence: {row['evidence']}"), body))
+        story.append(Paragraph(tx(f"Action directive: {row['directive']}"), body))
+        story.append(Spacer(1, 4))
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=20 * mm,
+                            rightMargin=20 * mm, topMargin=18 * mm,
+                            bottomMargin=18 * mm,
+                            title="FUTO IFT Executive Briefing",
+                            author="FUTO IFT Feedback System")
+    doc.build(story)
+    return buf.getvalue()
 
 
 def show_decision_support(admin_username: str = "admin", session: str | None = None,
@@ -515,45 +682,40 @@ def show_decision_support(admin_username: str = "admin", session: str | None = N
     )
 
     # ── Executive Briefing Document Generator ──
-    briefing_md = (
-        f"# Federal University of Technology, Owerri (FUTO)\n"
-        f"## Department of Information Technology (IFT)\n"
-        f"### Executive Academic Feedback & Decision Briefing\n\n"
-        f"**Academic Session:** {active_sess}  \n"
-        f"**Generated On:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n"
-        f"**Overall System Health:** {health}  \n"
-        f"**Departmental Average Rating:** {avg_all} / 5.0  \n"
-        f"**Total Student Feedback Submissions:** {total}  \n"
-        f"**Negative Feedback Share:** {neg_pct_total}%  \n\n"
-        f"---\n\n"
-        f"### Category Assessments & Action Plan Matrix\n\n"
-    )
-    for it in items:
-        it_note = notes.get(it["cat"], {}).get("note", "No action directive recorded.")
-        it_cfg = PRIORITY_CONFIG[it["priority"]]
-        briefing_md += (
-            f"#### {it['cat']}\n"
-            f"- **Priority Status:** {it_cfg['label']}\n"
-            f"- **Rating Score:** {it['avg']}/5.0 across {it['count']} submissions ({it['students']} students, {it['levels']} levels)\n"
-            f"- **Sentiment Split:** Positive: {it['pos']} | Neutral: {it['neu']} | Negative: {it['neg']} ({it['neg_pct']}%)\n"
-            f"- **Key Feedback Evidence:** {', '.join(it['top_items']) if it['top_items'] else 'None flagged'}\n"
-            f"- **Departmental Action Directive:** {it_note}\n\n"
-        )
+    # PDF when reportlab is installed (a declared dependency), Markdown when
+    # it is not — the button below always names the format it will actually
+    # deliver, so a stale install degrades to .md instead of a dead click.
+    _brief_kw = dict(session_label=active_sess,
+                     generated_on=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     health=health, avg_all=avg_all, total=total,
+                     neg_pct_total=neg_pct_total, items=items, notes=notes)
+    briefing_pdf = _build_briefing_pdf(**_brief_kw)
+    if briefing_pdf is not None:
+        _brief_label = "Download Executive Briefing (.pdf)"
+        _brief_data = briefing_pdf
+        _brief_file = f"FUTO_IFT_Executive_Briefing_{active_sess.replace('/', '_')}.pdf"
+        _brief_mime = "application/pdf"
+    else:
+        briefing_md = _build_briefing_md(**_brief_kw)
+        _brief_label = "Download Executive Briefing (.md)"
+        _brief_data = briefing_md.encode("utf-8")
+        _brief_file = f"FUTO_IFT_Executive_Briefing_{active_sess.replace('/', '_')}.md"
+        _brief_mime = "text/markdown"
 
     st.markdown(
         f'<div class="exec-briefing-card">'
         f'<div class="exec-briefing-info">'
         f'<div class="exec-briefing-title">{i("file-text", 18, "#2563eb")} Official Departmental Board Briefing</div>'
-        f'<div class="exec-briefing-desc">Export a print-ready executive summary for presentation at the IFT Departmental Board or Faculty Academic Board.</div>'
+        f'<div class="exec-briefing-desc">Export a print-ready executive summary (PDF) for presentation at the IFT Departmental Board or Faculty Academic Board.</div>'
         f'</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
     st_compat.download_button(
-        "Download Executive Briefing (.md)",
-        data=briefing_md.encode("utf-8"),
-        file_name=f"FUTO_IFT_Executive_Briefing_{active_sess.replace('/', '_')}.md",
-        mime="text/markdown",
+        _brief_label,
+        data=_brief_data,
+        file_name=_brief_file,
+        mime=_brief_mime,
         icon=":material/download:",
         use_container_width=True,
         type="primary",

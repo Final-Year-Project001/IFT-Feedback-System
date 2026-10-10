@@ -88,3 +88,11 @@ psycopg[binary]>=3.1.0,<4.0.0
 # Transitive, pinned only to keep the resolver from pairing a new major with
 # these versions. Not imported directly anywhere in the repo.
 numpy>=1.24.0,<3.0.0
+
+# Executive briefing PDF export (Decision Insights → Download Executive
+# Briefing). reportlab's platypus API (SimpleDocTemplate, Paragraph, Table)
+# has been stable for years; the floor is the oldest maintained line and the
+# cap holds back unreleased majors. Verified against 5.0.1. Without it the
+# briefing degrades to Markdown rather than failing — see
+# `_build_briefing_pdf` — but production should always install this.
+reportlab>=4.0.0,<6.0.0
