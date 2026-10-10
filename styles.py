@@ -1359,7 +1359,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
        capped it reads as a calm empty state with one clear action. Compact
        padding throughout: the card carries one icon, one line of heading
        and three lines of text, so tall air around them reads as broken. */
-    max-width: 780px; margin: .5rem auto 0 auto;
+    max-width: 780px; margin: -.75rem auto 0 auto;
 }
 .semester-gate-icon {
     width: 48px; height: 48px; margin: 0 auto .7rem;
@@ -1367,7 +1367,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     background: rgba(217,119,6,.13);
 }
 .semester-gate-title { font-size: 1rem; font-weight: 800; color: var(--text-1); margin-bottom: .35rem; }
-.semester-gate-text { font-size: .83rem; line-height: 1.65; color: var(--text-2); max-width: 620px; margin: 0 auto; }
+.semester-gate-text {
+    font-size: .83rem; line-height: 1.65; color: var(--text-2);
+    max-width: 620px; margin: 0 auto;
+    /* Stated, not inherited: this is the line a reader judges centring by.
+       `balance` evens the wrapped line lengths so centred text reads centred
+       instead of ragged; engines without it ignore the declaration. */
+    text-align: center; text-wrap: balance;
+}
 @media screen and (max-width: 576px) {
     .semester-gate { padding: 1.1rem .95rem 1rem; }
     .semester-gate-title { font-size: .95rem; }
