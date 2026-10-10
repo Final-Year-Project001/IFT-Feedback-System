@@ -261,7 +261,7 @@ def _show_student_signin():
             f'<div class="login-logo">{i("graduation-cap", 36, "#ffffff")}</div>'
             '<h1 class="login-title">'
             '<span class="login-title-dark">Smart Feedback &amp;</span><br>'
-            '<span class="login-title-gradient">Sentiment Intelligence</span>'
+            '<span class="login-title-gradient">Sentiment Analysis</span>'
             '</h1>'
             '</div>',
             unsafe_allow_html=True,
