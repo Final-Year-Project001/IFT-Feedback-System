@@ -1815,7 +1815,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .login-preview-card {
     display: grid;
     gap: 0.65rem;
-    grid-template-columns: 2.1fr 1.4fr 1.15fr;
+    grid-template-columns: 1.8fr 1.35fr 1.35fr;
     background: var(--navy-card2);
     border: 1px solid var(--navy-border);
     border-radius: 16px;
@@ -1828,42 +1828,95 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     background: #ffffff;
     border: 1px solid var(--navy-border);
     border-radius: 12px;
-    padding: 0.65rem 0.75rem;
+    padding: 0.7rem 0.75rem;
     display: flex;
     flex-direction: column;
+    justify-content: flex-start;
+    gap: 0.35rem;
+    min-width: 0;
+}
+.preview-tile-header {
+    display: flex;
+    align-items: center;
     justify-content: space-between;
+    margin-bottom: 0.15rem;
 }
 .preview-tile-title {
     font-size: var(--fs-2xs);
     font-weight: 700;
     color: #0f172a;
-    margin-bottom: 0.35rem;
+    letter-spacing: 0.01em;
+}
+.preview-tile-badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--blue-text);
+    background: rgba(37,99,235,.08);
+    padding: 0.1rem 0.38rem;
+    border-radius: 999px;
 }
 .preview-chart-svg {
     width: 100%;
-    height: 96px;
+    height: 106px;
     display: block;
 }
 .sentiment-donut-wrap {
     display: flex;
     justify-content: center;
     align-items: center;
-    margin: 0.15rem 0 0.35rem 0;
+    margin: 0.15rem 0 0.25rem 0;
 }
 .sentiment-donut-pie {
-    width: 60px;
-    height: 60px;
+    width: 62px;
+    height: 62px;
     border-radius: 50%;
-    background: conic-gradient(#10b981 0% 64%, #f59e0b 64% 84%, #ef4444 84% 100%);
+    background: conic-gradient(#10b981 0% 68%, #f59e0b 68% 86%, #ef4444 86% 100%);
     display: flex;
     align-items: center;
     justify-content: center;
 }
 .sentiment-donut-hole {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     background: #ffffff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+.donut-center-val {
+    font-size: 0.82rem;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1;
+}
+.sentiment-mini-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    width: 100%;
+    margin-top: auto;
+    padding-top: 0.3rem;
+    border-top: 1px solid var(--navy-border);
+}
+.legend-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: #64748b;
+    font-weight: 500;
+}
+.legend-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+.legend-value {
+    font-weight: 700;
+    color: #0f172a;
+    font-size: 0.7rem;
 }
 .sentiment-legend {
     display: flex;
@@ -1896,16 +1949,18 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    min-width: 0;
 }
 .preview-stat-card {
     background: #ffffff;
     border: 1px solid var(--navy-border);
     border-radius: 12px;
-    padding: 0.55rem 0.65rem;
+    padding: 0.65rem 0.75rem;
     display: flex;
-    align-items: center;
-    gap: 0.55rem;
+    flex-direction: column;
+    justify-content: space-between;
     flex: 1;
+    min-width: 0;
 }
 .preview-stat-card-topcourse {
     display: flex;
@@ -1916,13 +1971,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .preview-stat-header {
     font-size: var(--fs-2xs);
     font-weight: 700;
-    color: #0f172a;
-    margin-bottom: 0.15rem;
+    color: #64748b;
+    letter-spacing: 0.02em;
+    margin-bottom: 0.2rem;
 }
 .preview-stat-body {
     display: flex;
     align-items: center;
     gap: 0.55rem;
+}
+.preview-stat-details {
+    min-width: 0;
 }
 .preview-stat-icon {
     width: 28px;
@@ -1942,16 +2001,20 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     color: var(--green-text);
 }
 .preview-stat-value {
-    font-size: 0.98rem;
+    font-size: 0.96rem;
     font-weight: 800;
     color: #0f172a;
     line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .preview-stat-label {
-    font-size: var(--fs-2xs);
+    font-size: 0.7rem;
     color: #64748b;
-    font-weight: 500;
+    font-weight: 600;
     margin-top: 1px;
+    white-space: nowrap;
 }
 
 .login-form-header {
