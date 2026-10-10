@@ -341,12 +341,17 @@ def take_confirmation(token: str) -> bool:
     return False
 
 
-def html_metric(icon_name: str, value, label: str, accent: str = ""):
+def html_metric(icon_name: str, value, label: str, accent: str = "",
+                delta: str | None = None, badge: str | None = None):
+    badge_html = f'<div class="metric-top-badge">{esc(badge)}</div>' if badge else ""
+    delta_html = f'<div class="metric-delta-row">{esc(delta)}</div>' if delta else ""
     st.markdown(
         f'<div class="metric-card metric-accent-{accent}">'
+        f'{badge_html}'
         f'<div class="metric-icon-wrap">{icon_badge(icon_name, size=22, box=44)}</div>'
         f'<div class="metric-value">{esc(value)}</div>'
         f'<div class="metric-label">{esc(label)}</div>'
+        f'{delta_html}'
         f"</div>",
         unsafe_allow_html=True,
     )

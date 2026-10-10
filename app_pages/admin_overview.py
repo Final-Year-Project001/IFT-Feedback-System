@@ -34,10 +34,10 @@ def show_admin_overview(session: str | None = None):
     neg_pct = round(total_neg / total * 100, 1) if total else 0
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1: html_metric("inbox", total, "Total Responses", "blue")
-    with c2: html_metric("star", avg_all, "Overall Avg Rating", "gold")
-    with c3: html_metric("users", respondents, "Unique Students", "green")
-    with c4: html_metric("frown", f"{neg_pct}%", "Negative Sentiment", "purple")
+    with c1: html_metric("inbox", total, "Total Responses", "blue", badge="Volume")
+    with c2: html_metric("star", avg_all, "Overall Avg Rating", "gold", delta="Benchmark: ≥ 4.0 / 5.0", badge="Quality")
+    with c3: html_metric("users", respondents, "Unique Students", "green", delta=f"{categories_active} of {len(CATEGORIES)} Active", badge="Turnout")
+    with c4: html_metric("frown", f"{neg_pct}%", "Negative Sentiment", "purple", delta="Critical if ≥ 40%", badge="Risk")
 
     st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
     st.markdown(
@@ -57,6 +57,7 @@ def show_admin_overview(session: str | None = None):
         if sub.empty:
             count_label, avg_val, rating_clr = "No responses yet", "—", "#94a3b8"
             top_s, sent_clr = "Neutral", "#94a3b8"
+            meter_pct = 0
         else:
             avg_val = round(sub["rating"].mean(), 1)
             sents = sub["effective_sentiment"]
@@ -65,13 +66,18 @@ def show_admin_overview(session: str | None = None):
             rating_clr = "#059669" if avg_val >= 4 else "#d97706" if avg_val >= 3 else "#dc2626"
             pct_complete = round(len(sub) / respondents * 100) if respondents else 0
             count_label = f"{len(sub)} responses · {pct_complete}% student participation"
+            meter_pct = min(100, max(0, int(round((avg_val / 5.0) * 100))))
+        fill_style = f"width:{meter_pct}%;background:{rating_clr};"
         st.markdown(
             f'<div class="cat-breakdown-row">'
             f'<div class="cat-breakdown-icon-wrap">{i(CAT_META[cat]["icon"], 18, "#3b82f6")}</div>'
-            f'<div class="cat-breakdown-info"><div class="cat-breakdown-name">{cat}</div>'
-            f'<div class="cat-breakdown-count">{count_label}</div></div>'
+            f'<div class="cat-breakdown-info">'
+            f'<div class="cat-breakdown-name">{cat}</div>'
+            f'<div class="cat-breakdown-count">{count_label}</div>'
+            f'<div class="cat-meter-track"><div class="cat-meter-fill" style="{fill_style}"></div></div>'
+            f'</div>'
             f'<div class="cat-breakdown-stats">'
-            f'<div class="cat-breakdown-rating" style="color:{rating_clr};">{avg_val}</div>'
+            f'<div class="cat-breakdown-rating" style="color:{rating_clr};">{avg_val} / 5.0</div>'
             f'<div class="cat-breakdown-sent" style="color:{sent_clr};">{i(sentiment_icon(top_s), 12, sent_clr)} {top_s}</div>'
             f"</div></div>",
             unsafe_allow_html=True,

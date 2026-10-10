@@ -608,7 +608,8 @@ def _sidebar(user):
         st.markdown(
             f'<div class="sidebar-profile"><div class="sidebar-avatar">{esc(initials)}</div>'
             f'<div class="sidebar-name">{esc(user["name"])}</div>'
-            f'<div class="sidebar-role">{esc(role_display)}</div></div>',
+            f'<div class="sidebar-role">{esc(role_display)}</div>'
+            f'<div class="sidebar-dept-tag">{i("graduation-cap", 11)} FUTO · Information Technology</div></div>',
             unsafe_allow_html=True,
         )
 

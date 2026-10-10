@@ -20,7 +20,6 @@ from app_pages.targets import (
     render_lecturer_targets, render_course_targets, render_facility_targets,
     chart_card,
 )
-from app_pages.decision_insights import show_decision_support
 from components import html_metric, page_header, section_header, empty_state, esc, html_alert
 from icons import i, sentiment_icon, sentiment_color
 from sentiment import engine_status, display_engine_name
@@ -309,27 +308,20 @@ def show_full_dashboard(session: str | None = None):
     if _flash:
         getattr(st, st.session_state.pop("flash_kind", "success"))(_flash)
 
-    # Render Academic Session Manager
-    _render_session_manager(st.session_state.get("username", "admin"))
-    st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
-
     df = load_data(session=active_sess)
     if df.empty:
         empty_state("inbox", f"No Data For {active_sess}", "Try selecting a different academic session or creating new responses.")
+        # The session manager must stay reachable on an empty database: it is
+        # what creates the sessions that will one day hold data, and gating it
+        # behind "has data" strands a fresh deployment with no way to begin.
+        _render_session_manager(st.session_state.get("username", "admin"))
         return
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1: html_metric("inbox", len(df), "Total Responses", "blue")
-    with c2: html_metric("star", round(df["rating"].mean(), 1), "Avg Rating", "gold")
-    with c3: html_metric("users", df["username"].nunique(), "Unique Respondents", "green")
-    with c4: html_metric("folder", df["category"].nunique(), "Active Categories", "purple")
-
-    # ── Export ──
-    st_compat.download_button(
-        "Export raw data (CSV)", data=df.to_csv(index=False).encode("utf-8"),
-        file_name="futo_feedback_export.csv", mime="text/csv",
-        icon=":material/download:", use_container_width=False, type="primary",
-    )
+    with c1: html_metric("inbox", len(df), "Total Responses", "blue", badge="Volume")
+    with c2: html_metric("star", round(df["rating"].mean(), 1), "Avg Rating", "gold", delta="Benchmark: ≥ 4.0 / 5.0", badge="Score")
+    with c3: html_metric("users", df["username"].nunique(), "Unique Respondents", "green", delta=f"{df['category'].nunique()} of {len(CATEGORIES)} Categories", badge="Turnout")
+    with c4: html_metric("folder", df["category"].nunique(), "Active Categories", "purple", badge="Coverage")
 
     st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
 
@@ -345,277 +337,305 @@ def show_full_dashboard(session: str | None = None):
         unsafe_allow_html=True,
     )
 
-    section_header("trending-up", "Distribution & Overview")
-    c1, c2 = st.columns(2)
-    with c1:
-        chart_card("Overall Rating Distribution", "bar-chart", make_rating_bar(df, ""))
-    with c2:
-        chart_card("Category Overview", "radar", make_category_radar(df))
+    tab_analytics, tab_targets, tab_drilldown, tab_admin = st.tabs([
+        "Executive Analytics & Trends",
+        "Action Targets (Lecturers, Courses & Facilities)",
+        "Structured Feedback Drilldowns",
+        "Sessions & Administration",
+    ])
 
-    c3, c4 = st.columns(2)
-    with c3:
-        chart_card("Sentiment Analysis", "smile", make_sentiment_pie(df))
-    with c4:
-        chart_card("By Student Level", "graduation-cap", make_level_pie(df))
-
-    st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
-    chart_card("Rating Trend Over Time", "chart-bar", make_trend_bar(df))
-
-    st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
-    section_header("folder", "Per-Category Breakdown")
-
-    for cat in CATEGORIES:
-        sub = df[df["category"] == cat]
-        if sub.empty:
-            continue
-        avg, cnt = round(sub["rating"].mean(), 1), len(sub)
-        sents = sub["effective_sentiment"]
-        top_s = sents.value_counts().idxmax() if not sents.empty else "Neutral"
-        sent_clr = sentiment_color(top_s)
-        rating_clr = "#059669" if avg >= 4 else "#d97706" if avg >= 3 else "#dc2626"
-
-        ctx_extras = []
-        for _, row in sub.iterrows():
-            ctx = parse_context(row.get("context_data"))
-            if cat == "Course Content" and ctx.get("course_rated"):
-                ctx_extras.extend(context_text_list(ctx["course_rated"]))
-            elif cat == "Facilities" and ctx.get("facilities_flagged"):
-                ctx_extras.extend(context_text_list(ctx["facilities_flagged"]))
-            elif cat == "Curriculum" and ctx.get("missing_topics"):
-                ctx_extras.extend(context_text_list(ctx["missing_topics"]))
-            elif cat == "Lecturer Teaching Style" and ctx.get("challenges"):
-                ctx_extras.extend(context_text_list(ctx["challenges"]))
-
-        top_ctx = ""
-        if ctx_extras:
-            most_common = Counter(ctx_extras).most_common(1)
-            if most_common:
-                # `context_data` is a JSON blob in the feedback row, and the
-                # course/emphasis/facility strings inside it are not restricted
-                # to the option lists in config.py — anything a client can post
-                # ends up here. Rendered unescaped into an
-                # unsafe_allow_html block, one `<img onerror=…>` in a course
-                # name executed in every admin's browser.
-                top_ctx = (
-                    f' · Most flagged: <em style="color:#3b82f6;">'
-                    f'{esc(most_common[0][0])}</em>'
-                )
-
+    with tab_analytics:
         st.markdown(
-            f'<div class="cat-breakdown-row">'
-            f'<div class="cat-breakdown-icon-wrap">{i(CAT_META[cat]["icon"], 18, "#3b82f6")}</div>'
-            f'<div class="cat-breakdown-info"><div class="cat-breakdown-name">{cat}</div>'
-            f'<div class="cat-breakdown-count">{cnt} response{"s" if cnt != 1 else ""}{top_ctx}</div></div>'
-            f'<div class="cat-breakdown-stats">'
-            f'<div class="cat-breakdown-rating" style="color:{rating_clr};">{avg}</div>'
-            f'<div class="cat-breakdown-sent" style="color:{sent_clr};">{i(sentiment_icon(top_s), 12, sent_clr)} {top_s}</div>'
-            f"</div></div>",
+            f'<div class="tab-intro-card">'
+            f'<div class="tab-intro-text">'
+            f'<strong>Executive Analytics:</strong> Cross-category ratings, sentiment distribution, and student participation for <strong>{esc(active_sess)}</strong>.'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        section_header("trending-up", "Distribution & Overview")
+        c1, c2 = st.columns(2)
+        with c1:
+            chart_card("Overall Rating Distribution", "bar-chart", make_rating_bar(df, ""))
+        with c2:
+            chart_card("Category Overview", "radar", make_category_radar(df))
+
+        c3, c4 = st.columns(2)
+        with c3:
+            chart_card("Sentiment Analysis", "smile", make_sentiment_pie(df))
+        with c4:
+            chart_card("By Student Level", "graduation-cap", make_level_pie(df))
+
+        st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
+        chart_card("Rating Trend Over Time", "chart-bar", make_trend_bar(df))
+
+        st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
+        section_header("folder", "Per-Category Breakdown")
+
+        for cat in CATEGORIES:
+            sub = df[df["category"] == cat]
+            if sub.empty:
+                continue
+            avg, cnt = round(sub["rating"].mean(), 1), len(sub)
+            sents = sub["effective_sentiment"]
+            top_s = sents.value_counts().idxmax() if not sents.empty else "Neutral"
+            sent_clr = sentiment_color(top_s)
+            rating_clr = "#059669" if avg >= 4 else "#d97706" if avg >= 3 else "#dc2626"
+
+            ctx_extras = []
+            for _, row in sub.iterrows():
+                ctx = parse_context(row.get("context_data"))
+                if cat == "Course Content" and ctx.get("course_rated"):
+                    ctx_extras.extend(context_text_list(ctx["course_rated"]))
+                elif cat == "Facilities" and ctx.get("facilities_flagged"):
+                    ctx_extras.extend(context_text_list(ctx["facilities_flagged"]))
+                elif cat == "Curriculum" and ctx.get("missing_topics"):
+                    ctx_extras.extend(context_text_list(ctx["missing_topics"]))
+                elif cat == "Lecturer Teaching Style" and ctx.get("challenges"):
+                    ctx_extras.extend(context_text_list(ctx["challenges"]))
+
+            top_ctx = ""
+            if ctx_extras:
+                most_common = Counter(ctx_extras).most_common(1)
+                if most_common:
+                    top_ctx = (
+                        f' · Most flagged: <em style="color:#3b82f6;">'
+                        f'{esc(most_common[0][0])}</em>'
+                    )
+
+            meter_pct = min(100, max(0, int(round((avg / 5.0) * 100))))
+            fill_style = f"width:{meter_pct}%;background:{rating_clr};"
+            st.markdown(
+                f'<div class="cat-breakdown-row">'
+                f'<div class="cat-breakdown-icon-wrap">{i(CAT_META[cat]["icon"], 18, "#3b82f6")}</div>'
+                f'<div class="cat-breakdown-info">'
+                f'<div class="cat-breakdown-name">{cat}</div>'
+                f'<div class="cat-breakdown-count">{cnt} response{"s" if cnt != 1 else ""}{top_ctx}</div>'
+                f'<div class="cat-meter-track"><div class="cat-meter-fill" style="{fill_style}"></div></div>'
+                f'</div>'
+                f'<div class="cat-breakdown-stats">'
+                f'<div class="cat-breakdown-rating" style="color:{rating_clr};">{avg} / 5.0</div>'
+                f'<div class="cat-breakdown-sent" style="color:{sent_clr};">{i(sentiment_icon(top_s), 12, sent_clr)} {top_s}</div>'
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    with tab_targets:
+        st.markdown(
+            f'<div class="tab-intro-card">'
+            f'<div class="tab-intro-text">'
+            f'<strong>Priority Targets:</strong> Specific lecturers who need advisory support, courses requiring syllabus rework, and facilities needing urgent repair.'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        section_header("target", "Who & What Needs Attention")
+        st.caption(
+            "The three decisions this system exists to inform: which lecturer to "
+            "advise, which course to rework, and what to repair first. Each uses the "
+            "structured answers students selected rather than free text, so the "
+            "figures are counts of what was ticked."
+        )
+        render_lecturer_targets(session=session or ALL_SESSIONS_LABEL)
+        st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+        render_course_targets(session=session or ALL_SESSIONS_LABEL)
+        st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+        render_facility_targets(session=session or ALL_SESSIONS_LABEL)
+
+        html_alert(
+            "For full urgency analysis, policy recommendations, and the Action Plan Matrix, visit the <strong>Decision Insights</strong> portal.",
+            "info", raw=True,
+        )
+
+    with tab_drilldown:
+        st.markdown(
+            f'<div class="tab-intro-card">'
+            f'<div class="tab-intro-text">'
+            f'<strong>Granular Feedback Aggregations:</strong> Structured checklists and student preference distributions across all four departmental categories.'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        section_header("microscope", "Structured Feedback Aggregations")
+
+        with st.expander("Course Content — Top emphasis areas requested"):
+            sub = df[df["category"] == "Course Content"]
+            if sub.empty:
+                st.write("No data yet.")
+            else:
+                all_areas, courses_seen = [], []
+                for _, row in sub.iterrows():
+                    ctx = parse_context(row.get("context_data"))
+                    all_areas.extend(context_text_list(ctx.get("emphasis_areas"), limit=40))
+                    courses_seen.extend(context_text_list(ctx.get("course_rated")))
+                if all_areas:
+                    st_compat.dataframe(pd.DataFrame(Counter(all_areas).most_common(), columns=["Emphasis Area", "Votes"]),
+                                 use_container_width=True, hide_index=True)
+                if courses_seen:
+                    st.markdown(f"**Courses rated:** {', '.join(set(courses_seen))}")
+
+        with st.expander("Teaching Style — Most flagged challenges"):
+            sub = df[df["category"] == "Lecturer Teaching Style"]
+            if sub.empty:
+                st.write("No data yet.")
+            else:
+                all_challenges, all_methods = [], []
+                for _, row in sub.iterrows():
+                    ctx = parse_context(row.get("context_data"))
+                    all_challenges.extend(context_text_list(ctx.get("challenges"), limit=40))
+                    all_methods.extend(context_text_list(ctx.get("effective_methods"), limit=40))
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Top challenges:**")
+                    if all_challenges:
+                        st_compat.dataframe(pd.DataFrame(Counter(all_challenges).most_common(), columns=["Challenge", "Count"]),
+                                     use_container_width=True, hide_index=True)
+                with col2:
+                    st.markdown("**Most preferred methods:**")
+                    if all_methods:
+                        st_compat.dataframe(pd.DataFrame(Counter(all_methods).most_common(), columns=["Method", "Count"]),
+                                     use_container_width=True, hide_index=True)
+
+        with st.expander("Facilities — Most reported issues"):
+            sub = df[df["category"] == "Facilities"]
+            if sub.empty:
+                st.write("No data yet.")
+            else:
+                all_fac, urgency_list = [], []
+                for _, row in sub.iterrows():
+                    ctx = parse_context(row.get("context_data"))
+                    all_fac.extend(context_text_list(ctx.get("facilities_flagged"), limit=40))
+                    urgency_list.extend(context_text_list(ctx.get("urgency")))
+                if all_fac:
+                    st_compat.dataframe(pd.DataFrame(Counter(all_fac).most_common(), columns=["Facility", "Reports"]),
+                                 use_container_width=True, hide_index=True)
+                if urgency_list:
+                    _urg_counts = Counter(urgency_list).most_common()
+                    _urg_top, _urg_top_n = _urg_counts[0]
+                    st.markdown("**Urgency level reported:**")
+                    st_compat.dataframe(
+                        pd.DataFrame([{"Urgency level": lvl, "Students": n}
+                                      for lvl, n in _urg_counts], columns=["Urgency level", "Students"]),
+                        use_container_width=True, hide_index=True)
+                    _urg_split = ", ".join(
+                        f"{lvl.split('—')[0].strip()} {n}" for lvl, n in _urg_counts)
+                    st.caption(
+                        f"Most common: {_urg_top} ({_urg_top_n} of {len(urgency_list)} "
+                        f"responses). Full split — {_urg_split}."
+                    )
+
+        with st.expander("Curriculum — Gaps & outdated areas"):
+            sub = df[df["category"] == "Curriculum"]
+            if sub.empty:
+                st.write("No data yet.")
+            else:
+                all_missing, all_outdated, align_list = [], [], []
+                for _, row in sub.iterrows():
+                    ctx = parse_context(row.get("context_data"))
+                    all_missing.extend(context_text_list(ctx.get("missing_topics"), limit=40))
+                    all_outdated.extend(context_text_list(ctx.get("outdated_areas"), limit=40))
+                    align_list.extend(context_text_list(ctx.get("industry_alignment")))
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Most requested missing topics:**")
+                    if all_missing:
+                        st_compat.dataframe(pd.DataFrame(Counter(all_missing).most_common(), columns=["Topic", "Votes"]),
+                                     use_container_width=True, hide_index=True)
+                with col2:
+                    st.markdown("**Most flagged outdated areas:**")
+                    if all_outdated:
+                        st_compat.dataframe(pd.DataFrame(Counter(all_outdated).most_common(), columns=["Area", "Votes"]),
+                                     use_container_width=True, hide_index=True)
+                if align_list:
+                    _ALIGN_SCALE = ["Very Poor", "Poor", "Moderate", "Good", "Excellent"]
+                    _align_counts = Counter(align_list)
+                    _align_mean = (
+                        sum(_ALIGN_SCALE.index(v) + 1 for v in align_list if v in _ALIGN_SCALE)
+                        / max(1, sum(1 for v in align_list if v in _ALIGN_SCALE))
+                    )
+                    _align_top, _align_top_n = _align_counts.most_common(1)[0]
+                    _align_idx = int(_align_mean - 0.5) + 1
+                    _align_idx = max(1, min(len(_ALIGN_SCALE), _align_idx))
+                    st.markdown("**Industry alignment perception:**")
+                    st_compat.dataframe(
+                        pd.DataFrame([{"Rating": lvl, "Students": n}
+                                      for lvl, n in sorted(_align_counts.items(),
+                                                           key=lambda kv: _ALIGN_SCALE.index(kv[0])
+                                                           if kv[0] in _ALIGN_SCALE else 99)],
+                                      columns=["Rating", "Students"]),
+                        use_container_width=True, hide_index=True)
+                    st.caption(
+                        f"Average {_align_mean:.2f} of {len(_ALIGN_SCALE)} → "
+                        f"**{_ALIGN_SCALE[_align_idx - 1]}** "
+                        f"({len(align_list)} responses). "
+                        f"Most common answer: {_align_top} ({_align_top_n})."
+                    )
+
+    with tab_admin:
+        st.markdown(
+            f'<div class="tab-intro-card">'
+            f'<div class="tab-intro-text">'
+            f'<strong>Administrative & System Controls:</strong> Manage academic sessions, active semesters, rating sentiment overrides, and data exports.'
+            f'</div>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
-    section_header("lightbulb", "Recommended Actions")
-    st.caption(
-        "What to do, derived from the evidence below: which category needs urgent "
-        "action, what to read first, and how far the pattern reaches. The "
-        "thresholds are the sentiment bands themselves — 3.0 is neutral and 4.0 "
-        "is where a category reads positive."
-    )
-    show_decision_support(session=session or ALL_SESSIONS_LABEL, heading=False)
+        # Academic Session Manager
+        _render_session_manager(st.session_state.get("username", "admin"))
+        st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
-    section_header("target", "Who & What Needs Attention")
-    st.caption(
-        "The three decisions this system exists to inform: which lecturer to "
-        "advise, which course to rework, and what to repair first. Each uses the "
-        "structured answers students selected rather than free text, so the "
-        "figures are counts of what was ticked."
-    )
-    render_lecturer_targets(session=session or ALL_SESSIONS_LABEL)
-    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
-    render_course_targets(session=session or ALL_SESSIONS_LABEL)
-    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
-    render_facility_targets(session=session or ALL_SESSIONS_LABEL)
+        # ── Sentiment Engine Section ──
+        section_header("flask", "How Sentiment Is Decided")
 
-    st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
-    section_header("microscope", "Structured Feedback Aggregations")
+        status = engine_status()
+        _render_engine_status_card(status)
 
-    with st.expander("Course Content — Top emphasis areas requested"):
-        sub = df[df["category"] == "Course Content"]
-        if sub.empty:
-            st.write("No data yet.")
-        else:
-            all_areas, courses_seen = [], []
-            for _, row in sub.iterrows():
-                ctx = parse_context(row.get("context_data"))
-                all_areas.extend(context_text_list(ctx.get("emphasis_areas"), limit=40))
-                courses_seen.extend(context_text_list(ctx.get("course_rated")))
-            if all_areas:
-                st_compat.dataframe(pd.DataFrame(Counter(all_areas).most_common(), columns=["Emphasis Area", "Votes"]),
-                             use_container_width=True, hide_index=True)
-            if courses_seen:
-                st.markdown(f"**Courses rated:** {', '.join(set(courses_seen))}")
+        corrected_count = int((df["admin_corrected_sentiment"].notna()).sum()) if "admin_corrected_sentiment" in df.columns else 0
+        with st.expander(f"Review & override sentiment labels ({corrected_count} overridden so far)"):
+            st.caption(
+                f"The band on every submission comes from its rating, so there is nothing to "
+                f"correct in the normal case. An override is for the rare record where the rating "
+                f"and the structured answers plainly disagree — a 5-star rating on a submission that "
+                f"flags every delivery challenge, for instance. It is recorded against the row and "
+                f"takes precedence over the rating on every chart and export. "
+                f"{corrected_count} of {len(df)} record(s) currently carry one."
+            )
+            review_df = df[["id", "category", "rating", "effective_sentiment"]].copy()
+            review_df = review_df.rename(columns={"effective_sentiment": "sentiment"})
+            edited = st_compat.data_editor(
+                review_df,
+                use_container_width=True,
+                hide_index=True,
+                disabled=["id", "category"],
+                column_config={
+                    "id": st.column_config.NumberColumn("ID", width="small"),
+                    "rating": st.column_config.NumberColumn("Rating", width="small"),
+                    "sentiment": st.column_config.SelectboxColumn(
+                        "Sentiment", options=["Positive", "Neutral", "Negative"], required=True,
+                    ),
+                },
+                key="sentiment_review_editor",
+            )
+            if st_compat.button("Save corrections", icon=":material/save:", type="primary"):
+                changes = edited.merge(review_df, on="id", suffixes=("_new", "_old"))
+                changed_rows = changes[changes["sentiment_new"] != changes["sentiment_old"]]
+                for _, r in changed_rows.iterrows():
+                    correct_sentiment(int(r["id"]), r["sentiment_new"], st.session_state.get("username", "admin"))
+                if len(changed_rows):
+                    st.success(f"Saved {len(changed_rows)} correction(s).")
+                    st.rerun()
+                else:
+                    st.info("No changes to save.")
 
-    with st.expander("Teaching Style — Most flagged challenges"):
-        sub = df[df["category"] == "Lecturer Teaching Style"]
-        if sub.empty:
-            st.write("No data yet.")
-        else:
-            all_challenges, all_methods = [], []
-            for _, row in sub.iterrows():
-                ctx = parse_context(row.get("context_data"))
-                all_challenges.extend(context_text_list(ctx.get("challenges"), limit=40))
-                all_methods.extend(context_text_list(ctx.get("effective_methods"), limit=40))
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Top challenges:**")
-                if all_challenges:
-                    st_compat.dataframe(pd.DataFrame(Counter(all_challenges).most_common(), columns=["Challenge", "Count"]),
-                                 use_container_width=True, hide_index=True)
-            with col2:
-                st.markdown("**Most preferred methods:**")
-                if all_methods:
-                    st_compat.dataframe(pd.DataFrame(Counter(all_methods).most_common(), columns=["Method", "Count"]),
-                                 use_container_width=True, hide_index=True)
+        st.markdown("<div style='height:.5rem;'></div>", unsafe_allow_html=True)
+        section_header("database", "Data Records & Exports")
 
-    with st.expander("Facilities — Most reported issues"):
-        sub = df[df["category"] == "Facilities"]
-        if sub.empty:
-            st.write("No data yet.")
-        else:
-            all_fac, urgency_list = [], []
-            for _, row in sub.iterrows():
-                ctx = parse_context(row.get("context_data"))
-                all_fac.extend(context_text_list(ctx.get("facilities_flagged"), limit=40))
-                urgency_list.extend(context_text_list(ctx.get("urgency")))
-            if all_fac:
-                st_compat.dataframe(pd.DataFrame(Counter(all_fac).most_common(), columns=["Facility", "Reports"]),
-                             use_container_width=True, hide_index=True)
-            if urgency_list:
-                _urg_counts = Counter(urgency_list).most_common()
-                _urg_top, _urg_top_n = _urg_counts[0]
-                # The full distribution, not just the winner. A single headline
-                # figure hid the disagreement that actually makes a facilities
-                # problem actionable — a 40/30/30 split across urgency levels
-                # reads very differently from one flat 70% top answer, and an
-                # admin acting on "Moderate" alone would under-react to the
-                # students who said "Critical".
-                st.markdown("**Urgency level reported:**")
-                st_compat.dataframe(
-                    pd.DataFrame([{"Urgency level": lvl, "Students": n}
-                                  for lvl, n in _urg_counts], columns=["Urgency level", "Students"]),
-                    use_container_width=True, hide_index=True)
-                _urg_split = ", ".join(
-                    f"{lvl.split('—')[0].strip()} {n}" for lvl, n in _urg_counts)
-                st.caption(
-                    f"Most common: {_urg_top} ({_urg_top_n} of {len(urgency_list)} "
-                    f"responses). Full split — {_urg_split}."
-                )
-
-    with st.expander("Curriculum — Gaps & outdated areas"):
-        sub = df[df["category"] == "Curriculum"]
-        if sub.empty:
-            st.write("No data yet.")
-        else:
-            all_missing, all_outdated, align_list = [], [], []
-            for _, row in sub.iterrows():
-                ctx = parse_context(row.get("context_data"))
-                all_missing.extend(context_text_list(ctx.get("missing_topics"), limit=40))
-                all_outdated.extend(context_text_list(ctx.get("outdated_areas"), limit=40))
-                align_list.extend(context_text_list(ctx.get("industry_alignment")))
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Most requested missing topics:**")
-                if all_missing:
-                    st_compat.dataframe(pd.DataFrame(Counter(all_missing).most_common(), columns=["Topic", "Votes"]),
-                                 use_container_width=True, hide_index=True)
-            with col2:
-                st.markdown("**Most flagged outdated areas:**")
-                if all_outdated:
-                    st_compat.dataframe(pd.DataFrame(Counter(all_outdated).most_common(), columns=["Area", "Votes"]),
-                                 use_container_width=True, hide_index=True)
-            if align_list:
-                # This was labelled "Average industry alignment perception" but
-                # computed `Counter(...).most_common(1)[0][0]`, which is the
-                # MODE, not the average. On an ordinal 1-5 scale that is a
-                # materially different and much less useful number: a set of
-                # answers of [Very Poor, Poor, Poor, Poor, Excellent] reports
-                # "Poor" either way, but [Poor, Poor, Poor, Excellent,
-                # Excellent] reports "Poor" as a mode and would have been
-                # dragged to "Moderate" as a mean. The mean is what the label
-                # claims and what a departmental decision needs, so the mean is
-                # what is computed — with the mode kept alongside it, because
-                # the mode is what students actually said.
-                _ALIGN_SCALE = ["Very Poor", "Poor", "Moderate", "Good", "Excellent"]
-                _align_counts = Counter(align_list)
-                _align_mean = (
-                    sum(_ALIGN_SCALE.index(v) + 1 for v in align_list if v in _ALIGN_SCALE)
-                    / max(1, sum(1 for v in align_list if v in _ALIGN_SCALE))
-                )
-                _align_top, _align_top_n = _align_counts.most_common(1)[0]
-                # Round to the nearest whole scale point for a plain-language
-                # reading. `round` is banker's rounding, so nudge halves up
-                # explicitly rather than let 3.5 become 4 by luck of parity.
-                _align_idx = int(_align_mean - 0.5) + 1
-                _align_idx = max(1, min(len(_ALIGN_SCALE), _align_idx))
-                st.markdown("**Industry alignment perception:**")
-                st_compat.dataframe(
-                    pd.DataFrame([{"Rating": lvl, "Students": n}
-                                  for lvl, n in sorted(_align_counts.items(),
-                                                       key=lambda kv: _ALIGN_SCALE.index(kv[0])
-                                                       if kv[0] in _ALIGN_SCALE else 99)],
-                                  columns=["Rating", "Students"]),
-                    use_container_width=True, hide_index=True)
-                st.caption(
-                    f"Average {_align_mean:.2f} of {len(_ALIGN_SCALE)} → "
-                    f"**{_ALIGN_SCALE[_align_idx - 1]}** "
-                    f"({len(align_list)} responses). "
-                    f"Most common answer: {_align_top} ({_align_top_n})."
-                )
-
-    # ── Sentiment Engine Section ──────────────────────────────────────
-    section_header("flask", "How Sentiment Is Decided")
-
-    status = engine_status()
-    _render_engine_status_card(status)
-
-    corrected_count = int((df["admin_corrected_sentiment"].notna()).sum()) if "admin_corrected_sentiment" in df.columns else 0
-    with st.expander(f"Review & override sentiment labels ({corrected_count} overridden so far)"):
-        st.caption(
-            f"The band on every submission comes from its rating, so there is nothing to "
-            f"correct in the normal case. An override is for the rare record where the rating "
-            f"and the structured answers plainly disagree — a 5-star rating on a submission that "
-            f"flags every delivery challenge, for instance. It is recorded against the row and "
-            f"takes precedence over the rating on every chart and export. "
-            f"{corrected_count} of {len(df)} record(s) currently carry one."
+        st_compat.download_button(
+            "Export raw data (CSV)", data=df.to_csv(index=False).encode("utf-8"),
+            file_name="futo_feedback_export.csv", mime="text/csv",
+            icon=":material/download:", use_container_width=False, type="primary",
         )
-        review_df = df[["id", "category", "rating", "effective_sentiment"]].copy()
-        review_df = review_df.rename(columns={"effective_sentiment": "sentiment"})
-        edited = st_compat.data_editor(
-            review_df,
-            use_container_width=True,
-            hide_index=True,
-            disabled=["id", "category"],
-            column_config={
-                "id": st.column_config.NumberColumn("ID", width="small"),
-                "rating": st.column_config.NumberColumn("Rating", width="small"),
-                "sentiment": st.column_config.SelectboxColumn(
-                    "Sentiment", options=["Positive", "Neutral", "Negative"], required=True,
-                ),
-            },
-            key="sentiment_review_editor",
-        )
-        if st_compat.button("Save corrections", icon=":material/save:", type="primary"):
-            changes = edited.merge(review_df, on="id", suffixes=("_new", "_old"))
-            changed_rows = changes[changes["sentiment_new"] != changes["sentiment_old"]]
-            for _, r in changed_rows.iterrows():
-                correct_sentiment(int(r["id"]), r["sentiment_new"], st.session_state.get("username", "admin"))
-            if len(changed_rows):
-                st.success(f"Saved {len(changed_rows)} correction(s).")
-                st.rerun()
-            else:
-                st.info("No changes to save.")
-
-    st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
-    with st.expander("View Raw Data Table"):
-        st_compat.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+        st.markdown("<div style='height:.3rem;'></div>", unsafe_allow_html=True)
+        with st.expander("View Raw Data Table"):
+            st_compat.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)

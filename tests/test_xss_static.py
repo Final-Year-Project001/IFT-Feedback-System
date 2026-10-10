@@ -277,6 +277,8 @@ SAFE_NAMES = {
     r"^trained_at$": "full_dashboard.py: esc()'d at its only assignment",
     r"^contrast_html$": "full_dashboard.py: floats and literals only",
     r"^badge_html$": "built from counts, colours and literals only",
+    r"^delta_html$": "components.py: delta text esc()'d at assignment",
+    r"^matrix_html$": "decision_insights.py: action matrix rows built from esc()'d parts",
     r"^conf_badge$": "_confidence_pill: a tier name and a hex literal",
     r"^status_html$": "my_stats.py: a rating int, a closed-set label, "
                         "_confidence_pill and i()",

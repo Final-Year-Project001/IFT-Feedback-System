@@ -3758,5 +3758,247 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
         transform: none;
     }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   EXECUTIVE DASHBOARD & DECISION SUPPORT SYSTEM UPGRADES
+   ══════════════════════════════════════════════════════════════ */
+
+/* Category performance progress meter */
+.cat-meter-track {
+    height: 6px;
+    background: var(--navy-border);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: .4rem;
+    width: 100%;
+    max-width: 240px;
+}
+.cat-meter-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width var(--dur-4) var(--ease-standard);
+}
+
+/* Metric card header & delta rows */
+.metric-top-badge {
+    position: absolute;
+    top: .6rem;
+    right: .75rem;
+    font-size: var(--fs-2xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    padding: .15rem .5rem;
+    border-radius: 999px;
+    background: rgba(15,23,42,.05);
+    color: var(--text-3);
+    border: 1px solid var(--navy-border);
+}
+.metric-delta-row {
+    font-size: var(--fs-2xs);
+    color: var(--text-3);
+    margin-top: .45rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .25rem;
+}
+
+/* Sidebar institutional department tag */
+.sidebar-dept-tag {
+    font-size: var(--fs-2xs);
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--blue-text);
+    margin-top: .4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .3rem;
+}
+
+/* Action plan matrix table in Decision Insights */
+.action-matrix-card {
+    background: var(--navy-card);
+    border: 1px solid var(--navy-border2);
+    border-radius: var(--radius-lg);
+    padding: 1.4rem 1.6rem;
+    margin-top: 1.2rem;
+    margin-bottom: 1.4rem;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+}
+.action-matrix-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #2563eb, #7c3aed, #059669);
+}
+.action-matrix-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.1rem;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+.action-matrix-title {
+    font-size: .95rem;
+    font-weight: 700;
+    color: var(--text-1);
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+}
+.action-matrix-subtitle {
+    font-size: var(--fs-2xs);
+    color: var(--text-3);
+}
+.action-matrix-row {
+    display: grid;
+    grid-template-columns: 200px 140px 1fr 140px;
+    gap: 1rem;
+    align-items: center;
+    padding: .85rem .95rem;
+    background: var(--navy-card2);
+    border: 1px solid var(--navy-border);
+    border-radius: var(--radius-sm);
+    margin-bottom: .6rem;
+    transition: background-color var(--dur-2) ease, border-color var(--dur-2) ease;
+}
+.action-matrix-row:hover {
+    background: rgba(37,99,235,.03);
+    border-color: rgba(37,99,235,.25);
+}
+.action-matrix-cat {
+    font-size: .88rem;
+    font-weight: 700;
+    color: var(--text-1);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+.action-matrix-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    font-size: var(--fs-2xs);
+    font-weight: 700;
+    padding: .2rem .6rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.action-matrix-note {
+    font-size: .8rem;
+    color: var(--text-2);
+    line-height: 1.5;
+    word-break: break-word;
+}
+.action-matrix-meta {
+    font-size: var(--fs-2xs);
+    color: var(--text-3);
+    text-align: right;
+    line-height: 1.4;
+}
+.action-matrix-status {
+    display: inline-flex;
+    align-items: center;
+    gap: .25rem;
+    font-size: var(--fs-2xs);
+    font-weight: 700;
+    padding: .15rem .5rem;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+.action-matrix-status.is-resolved {
+    background: rgba(5,150,105,.1);
+    color: var(--green-text);
+    border: 1px solid rgba(5,150,105,.25);
+}
+.action-matrix-status.is-progress {
+    background: rgba(37,99,235,.1);
+    color: var(--blue-text);
+    border: 1px solid rgba(37,99,235,.25);
+}
+.action-matrix-status.is-pending {
+    background: rgba(217,119,6,.1);
+    color: var(--gold-text);
+    border: 1px solid rgba(217,119,6,.25);
+}
+
+/* Tab introduction banner */
+.tab-intro-card {
+    background: var(--navy-card2);
+    border: 1px solid var(--navy-border);
+    border-radius: var(--radius-sm);
+    padding: .85rem 1.15rem;
+    margin-bottom: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.tab-intro-text {
+    font-size: .84rem;
+    color: var(--text-2);
+    line-height: 1.55;
+    flex: 1 1 auto;
+    min-width: 240px;
+}
+.tab-intro-text strong {
+    color: var(--text-1);
+}
+
+/* Executive briefing export card */
+.exec-briefing-card {
+    background: linear-gradient(135deg, rgba(37,99,235,.06) 0%, rgba(124,58,237,.04) 100%);
+    border: 1px solid rgba(37,99,235,.2);
+    border-radius: var(--radius-lg);
+    padding: 1.4rem 1.8rem;
+    margin-top: 1rem;
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+.exec-briefing-info {
+    flex: 1 1 auto;
+    min-width: 240px;
+}
+.exec-briefing-title {
+    font-size: 1rem;
+    font-weight: 800;
+    color: var(--text-1);
+    margin-bottom: .25rem;
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+}
+.exec-briefing-desc {
+    font-size: .82rem;
+    color: var(--text-2);
+    line-height: 1.5;
+}
+
+@media screen and (max-width: 768px) {
+    .action-matrix-row {
+        grid-template-columns: 1fr !important;
+        gap: .5rem !important;
+    }
+    .action-matrix-meta {
+        text-align: left !important;
+    }
+    .cat-meter-track {
+        max-width: 100% !important;
+    }
+}
 </style>
 """

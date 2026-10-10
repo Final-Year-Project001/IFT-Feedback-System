@@ -466,6 +466,99 @@ def show_decision_support(admin_username: str = "admin", session: str | None = N
                 if existing.get("updated_at"):
                     st.caption(f"Last updated by {esc(existing.get('updated_by',''))} on {esc(existing.get('updated_at',''))}")
 
+    section_header("clipboard-list", "Departmental Action Plan Matrix")
+    matrix_rows = []
+    for item in items:
+        c_name = item["cat"]
+        c_note_obj = notes.get(c_name, {})
+        c_note_text = c_note_obj.get("note", "").strip()
+        c_prio = item["priority"]
+        cfg = PRIORITY_CONFIG[c_prio]
+
+        if c_prio == "good":
+            st_class = "is-resolved"
+            st_text = "Benchmark"
+        elif c_note_text:
+            st_class = "is-progress"
+            st_text = "In Progress"
+        else:
+            st_class = "is-pending"
+            st_text = "Pending Directive"
+
+        note_display = c_note_text if c_note_text else "No administrative directive logged yet. Open the note editor above to record action."
+        meta_author = f"By {c_note_obj.get('updated_by', '—')}" if c_note_text else "Awaiting entry"
+        meta_time = str(c_note_obj.get("updated_at", ""))[:16]
+
+        matrix_rows.append(
+            f'<div class="action-matrix-row">'
+            f'<div class="action-matrix-cat">{i(CAT_META[c_name]["icon"], 16, "#3b82f6")} {esc(c_name)}</div>'
+            f'<div><span class="action-matrix-badge" style="background:{cfg["bg"]};color:{cfg["color"]};border:1px solid {cfg["border"]};">'
+            f'{i(cfg["label_icon"], 11, cfg["color"])} {esc(cfg["label"])}</span></div>'
+            f'<div class="action-matrix-note">{esc(note_display)}</div>'
+            f'<div>'
+            f'<div class="action-matrix-status {esc(st_class)}">{esc(st_text)}</div>'
+            f'<div class="action-matrix-meta">{esc(meta_author)}<br>{esc(meta_time)}</div>'
+            f'</div>'
+            f'</div>'
+        )
+
+    matrix_html = "".join(matrix_rows)
+    st.markdown(
+        f'<div class="action-matrix-card">'
+        f'<div class="action-matrix-header">'
+        f'<div class="action-matrix-title">{i("clipboard-list", 16, "#2563eb")} Active Departmental Interventions & Directives</div>'
+        f'<div class="action-matrix-subtitle">Consolidated action status for HOD and academic committees ({esc(active_sess)})</div>'
+        f'</div>'
+        f'{matrix_html}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Executive Briefing Document Generator ──
+    briefing_md = (
+        f"# Federal University of Technology, Owerri (FUTO)\n"
+        f"## Department of Information Technology (IFT)\n"
+        f"### Executive Academic Feedback & Decision Briefing\n\n"
+        f"**Academic Session:** {active_sess}  \n"
+        f"**Generated On:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n"
+        f"**Overall System Health:** {health}  \n"
+        f"**Departmental Average Rating:** {avg_all} / 5.0  \n"
+        f"**Total Student Feedback Submissions:** {total}  \n"
+        f"**Negative Feedback Share:** {neg_pct_total}%  \n\n"
+        f"---\n\n"
+        f"### Category Assessments & Action Plan Matrix\n\n"
+    )
+    for it in items:
+        it_note = notes.get(it["cat"], {}).get("note", "No action directive recorded.")
+        it_cfg = PRIORITY_CONFIG[it["priority"]]
+        briefing_md += (
+            f"#### {it['cat']}\n"
+            f"- **Priority Status:** {it_cfg['label']}\n"
+            f"- **Rating Score:** {it['avg']}/5.0 across {it['count']} submissions ({it['students']} students, {it['levels']} levels)\n"
+            f"- **Sentiment Split:** Positive: {it['pos']} | Neutral: {it['neu']} | Negative: {it['neg']} ({it['neg_pct']}%)\n"
+            f"- **Key Feedback Evidence:** {', '.join(it['top_items']) if it['top_items'] else 'None flagged'}\n"
+            f"- **Departmental Action Directive:** {it_note}\n\n"
+        )
+
+    st.markdown(
+        f'<div class="exec-briefing-card">'
+        f'<div class="exec-briefing-info">'
+        f'<div class="exec-briefing-title">{i("file-text", 18, "#2563eb")} Official Departmental Board Briefing</div>'
+        f'<div class="exec-briefing-desc">Export a print-ready executive summary for presentation at the IFT Departmental Board or Faculty Academic Board.</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st_compat.download_button(
+        "Download Executive Briefing (.md)",
+        data=briefing_md.encode("utf-8"),
+        file_name=f"FUTO_IFT_Executive_Briefing_{active_sess.replace('/', '_')}.md",
+        mime="text/markdown",
+        icon=":material/download:",
+        use_container_width=True,
+        type="primary",
+    )
+
     trend_text = ("Positive Trend" if neg_pct_total < _NEG_ANY_PCT and avg_all >= _POSITIVE_AT
                 else "Stable" if neg_pct_total < _NEG_CRITICAL_PCT
                 else "Declining")

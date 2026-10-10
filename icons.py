@@ -123,6 +123,7 @@ ICN = {
     "wrench": "wrench", "map-pin": "map-pin", "siren": "siren", "factory": "factory",
     "heart": "heart", "message": "message-circle", "sparkles": "sparkles",
     "award": "award", "file-text": "file-text", "list-checks": "list-checks",
+    "clipboard-list": "clipboard-list",
     "chevron-right": "chevron-right", "chevron-down": "chevron-down",
     "graduation-cap": "graduation-cap",
     "bar-chart": "chart-bar", "pie-chart": "chart-pie", "radar": "radar",
