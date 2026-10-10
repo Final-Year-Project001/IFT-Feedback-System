@@ -200,23 +200,24 @@ def _do_login_by_email(email, password):
 #  SIGN IN
 # ══════════════════════════════════════════════════════════════
 
-def _top_rated_course() -> str:
-    """Short course code with the highest average rating, or "—" if none.
+def _top_rated_course() -> tuple[str, float | None]:
+    """(short code, average) of the highest-rated course, or ("—", None).
 
     Read live from Course Content submissions (all sessions — the tile names
     no session, so the aggregate is the honest scope), combining levels by
     response-weighted average and breaking ties by response count. A preview
-    tile showing a hardcoded course would be caught by the first examiner who
-    compares it with the dashboard; this way the two can never disagree.
-    Anything unreadable (empty table, bad rows, a down database) degrades to
-    the em dash rather than taking the login page with it.
+    tile showing a hardcoded course — or a live course with a hardcoded
+    average — would be caught by the first examiner who compares it with the
+    dashboard; this way the two can never disagree. Anything unreadable
+    (empty table, bad rows, a down database) degrades to the em dash rather
+    than taking the login page with it.
     """
     import re
 
     try:
         rows = db.course_summary()
     except Exception:
-        return "—"
+        return "—", None
     combined: dict[str, list[float]] = {}
     for entry in rows or []:
         name = str((entry or {}).get("course") or "").strip()
@@ -238,8 +239,9 @@ def _top_rated_course() -> str:
         if (avg, n) > (best_avg, best_n):
             best, best_avg, best_n = name, avg, n
     if not best:
-        return "—"
-    return re.split(r"\s+[–—-]\s+", best, maxsplit=1)[0].strip() or "—"
+        return "—", None
+    short = re.split(r"\s+[–—-]\s+", best, maxsplit=1)[0].strip() or "—"
+    return short, round(best_avg, 1)
 
 
 def _show_student_signin():
@@ -298,9 +300,11 @@ def _show_student_signin():
 
     with right_col:
         # The preview mirrors live system data, not demo text: the top course
-        # is read from actual submissions just above, and escaped at the point
-        # of interpolation like every other database string in HTML.
-        _top_course = _top_rated_course()
+        # and its average come from actual submissions just above, and both
+        # are escaped at the point of interpolation like every other database
+        # string in HTML.
+        _top_course, _top_avg = _top_rated_course()
+        _top_label = f"{_top_avg:.1f}★ Satisfaction" if _top_avg is not None else "No ratings yet"
         st.markdown(
             '<div class="login-form-header"><div class="login-form-header-bar"></div>'
             '<div class="login-form-header-tag">STUDENT PORTAL</div>'
@@ -409,12 +413,13 @@ def _show_student_signin():
             '</div>'
             '<div class="preview-stat-details">'
             f'<div class="preview-stat-value">{esc(_top_course)}</div>'
-            '<div class="preview-stat-label">4.8★ Satisfaction</div>'
+            f'<div class="preview-stat-label">{esc(_top_label)}</div>'
             '</div>'
             '</div>'
             '</div>'
             '</div>'
-            '</div>'
+            f'<div class="login-scroll-hint">{i("chevron-down", 14, "#2563eb")}'
+            '<span>Scroll down to log in</span></div>'
             '<p>Enter your registered email address and password to access your feedback dashboard.</p></div>',
             unsafe_allow_html=True,
         )

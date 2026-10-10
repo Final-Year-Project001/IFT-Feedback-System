@@ -2038,6 +2038,25 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     text-overflow: ellipsis;
 }
 
+/* Scroll cue under the preview card. The taller card pushes the credentials
+   form below the fold on desktop, so first-time visitors need a signpost.
+   Desktop-only by request: below the column-stacking breakpoint the page
+   already reads top-to-bottom and needs no pointer. No animation — a static
+   cue carries no motion-gate obligations. */
+.login-scroll-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .4rem;
+    margin: .1rem 0 1rem;
+    color: #64748b;
+    font-size: .78rem;
+    font-weight: 600;
+}
+@media screen and (max-width: 700px) {
+    .login-scroll-hint { display: none; }
+}
+
 .login-form-header {
     margin-top: 0; margin-bottom: 1.2rem;
     background: #ffffff; border: 1px solid var(--navy-border2);
