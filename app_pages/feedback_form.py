@@ -410,17 +410,22 @@ def _render_inactive_semester_gate(active_sess: str, chosen: str, active_semeste
         f'</div>',
         unsafe_allow_html=True,
     )
-    if st_compat.button(
-        f"Switch to {active_semester} and continue",
-        key="semester_switch_btn",
-        type="primary",
-        use_container_width=True,
-        on_click=_set_semester_choice,
-        args=(active_semester,),
-    ):
-        # The callback has already set the radio; the rerun it triggers lands on
-        # the active semester's form. Nothing to do inline.
-        pass
+    # Centred and capped: a full-bleed gradient bar reads as a banner, not an
+    # action. The middle column carries the button; the gutters collapse on a
+    # phone, where full width is correct again.
+    _, _switch_col, _ = st.columns([1, 2, 1])
+    with _switch_col:
+        if st_compat.button(
+            f"Switch to {active_semester} and continue",
+            key="semester_switch_btn",
+            type="primary",
+            use_container_width=True,
+            on_click=_set_semester_choice,
+            args=(active_semester,),
+        ):
+            # The callback has already set the radio; the rerun it triggers lands on
+            # the active semester's form. Nothing to do inline.
+            pass
 
 
 def _confirmation_rows(category: str, pending: dict, semester: str):

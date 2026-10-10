@@ -757,6 +757,24 @@ def show_mandatory_password_change(username: str):
 
 def show_login_page():
     _hide_sidebar()
+    # A refresh that arrived with a session token but could not honour it
+    # (no cookie, or no row) records the reason instead of failing silently.
+    # Said once, in plain words, with no token and no account detail — then
+    # popped, so a failed sign-in attempt below does not repeat it.
+    _restore_note = st.session_state.pop("_restore_note", None)
+    if _restore_note == "no_cookie":
+        html_alert(
+            "Your last session could not be restored because this browser did "
+            "not send its login cookie. Check that cookies are enabled for "
+            "this site, then sign in below.",
+            "info",
+        )
+    elif _restore_note == "no_row":
+        html_alert(
+            "Your last session is no longer on record (it may have expired). "
+            "Please sign in again.",
+            "info",
+        )
     view = st.session_state.get("login_view", "signin")
 
     if view in ("register", "forgot_request", "forgot_verify"):

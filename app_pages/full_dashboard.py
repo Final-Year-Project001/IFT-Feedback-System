@@ -23,7 +23,7 @@ from app_pages.targets import (
 from app_pages.decision_insights import show_decision_support
 from components import html_metric, page_header, section_header, empty_state, esc, html_alert
 from icons import i, sentiment_icon, sentiment_color
-from sentiment import engine_status
+from sentiment import engine_status, display_engine_name
 
 
 def _as_float(value):
@@ -54,7 +54,7 @@ def _render_engine_status_card(status: dict):
     engine_bg = "rgba(5,150,105,.08)"
     engine_border = "rgba(5,150,105,.25)"
     engine_dot = "#10b981"
-    engine_label = esc(status.get("active_engine", "rating_threshold_engine"))
+    engine_label = esc(display_engine_name(status.get("active_engine") or "rating_threshold_engine"))
     engine_icon_name = "zap"
     if problems:
         # Kept as a branch rather than deleted: `engine_status()` is a public
@@ -64,7 +64,7 @@ def _render_engine_status_card(status: dict):
         engine_bg = "rgba(217,119,6,.08)"
         engine_border = "rgba(217,119,6,.25)"
         engine_dot = "#f59e0b"
-        engine_label = f"Degraded — {esc(status.get('engine_name', 'unavailable'))}"
+        engine_label = f"Degraded — {esc(display_engine_name(status.get('engine_name', 'unavailable')))}"
         engine_icon_name = "alert-triangle"
 
     # `lex_count`, `mwe_count`, `neg_count` and `intens_count` used to be read

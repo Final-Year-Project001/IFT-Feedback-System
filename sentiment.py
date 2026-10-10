@@ -65,6 +65,23 @@ RATING_LABELS: Dict[int, str] = {
 # column can never report different engines for the same version.
 ENGINE_NAME = "rating_threshold_engine"
 
+# What a human reads on screen. `ENGINE_NAME` is a storage contract — rows
+# already on disk carry it, and renaming it would split history — so the
+# underscores are translated at display time instead, in exactly one place.
+ENGINE_DISPLAY_NAME = "rating threshold engine"
+
+
+def display_engine_name(name) -> str:
+    """The on-screen form of a stored engine name.
+
+    Anything unrecognised (including None) degrades to the current engine's
+    display name rather than printing a raw constant or "None".
+    """
+    text = str(name or "").strip()
+    if text == ENGINE_NAME:
+        return ENGINE_DISPLAY_NAME
+    return text.replace("_", " ") if text else ENGINE_DISPLAY_NAME
+
 POSITIVE_RATING_COLOR = "#10b981"
 NEGATIVE_RATING_COLOR = "#ef4444"
 NEUTRAL_RATING_COLOR = "#f59e0b"

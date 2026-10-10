@@ -370,7 +370,7 @@ def _render_confirm_dialog(target: str, acting_user: str, reason: str):
     is_admin = preview["role"] == "admin"
     blocked = preview["is_self"] or preview["is_last_admin"] or is_admin
 
-    @st_compat.dialog("Confirm permanent deletion", width="large")
+    @st_compat.dialog("Confirm permanent deletion", width="small")
     def _dialog():
         st.markdown(
             f'<div class="danger-banner">'
@@ -638,7 +638,7 @@ def _render_restore_dialog(audit_id: int, username: str, acting_user: str,
     fb_count = int(row[1]) if row else 0
     reason = (row[2] if row else "") or "No reason recorded"
 
-    @st_compat.dialog("Confirm account restore", width="large")
+    @st_compat.dialog("Confirm account restore", width="small")
     def _dialog():
         st.markdown(
             f'<div class="confirm-summary">'

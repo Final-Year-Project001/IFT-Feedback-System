@@ -239,6 +239,29 @@ check("rating_label names all five bands",
       [sentiment.rating_label(n) for n in range(1, 6)]
       == ["Poor", "Fair", "Good", "Very Good", "Excellent"])
 
+section("7. The stored name stays put; the screen name has no underscores")
+# ══════════════════════════════════════════════════════════════════════
+
+# `ENGINE_NAME` is a storage contract — rows on disk carry it — so the card
+# shows a mapped display name instead of a renamed constant. Both halves are
+# pinned: the constant must not drift (history would split), and the display
+# must not contain underscores.
+check("the stored engine name is unchanged",
+      sentiment.ENGINE_NAME == "rating_threshold_engine", sentiment.ENGINE_NAME)
+check("the display name has no underscores",
+      "_" not in sentiment.ENGINE_DISPLAY_NAME
+      and sentiment.ENGINE_DISPLAY_NAME == "rating threshold engine",
+      sentiment.ENGINE_DISPLAY_NAME)
+check("display_engine_name maps the stored constant",
+      sentiment.display_engine_name(sentiment.ENGINE_NAME)
+      == sentiment.ENGINE_DISPLAY_NAME)
+check("...and degrades anything else instead of printing it raw",
+      sentiment.display_engine_name(None) == sentiment.ENGINE_DISPLAY_NAME
+      and sentiment.display_engine_name("") == sentiment.ENGINE_DISPLAY_NAME
+      and "_" not in sentiment.display_engine_name("some_future_engine"))
+check("the dashboard renders the display name, not the constant",
+      "display_engine_name(" in Path("app_pages/full_dashboard.py").read_text(encoding="utf-8"))
+
 
 # ══════════════════════════════════════════════════════════════════════
 print()

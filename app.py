@@ -463,7 +463,11 @@ def _restore_session() -> None:
     if not client_id:
         # A token with no readable cookie is either a brand-new browser or
         # somebody else's link. Neither may be restored, and the token is
-        # discarded so it stops travelling through this browser's URLs.
+        # discarded so it stops travelling through this browser's URLs. The
+        # reason is recorded (not the token, never any account detail) so the
+        # login page can say what happened instead of silently landing there —
+        # a cookie-blocked user otherwise debugs a mystery.
+        st.session_state["_restore_note"] = "no_cookie"
         _drop_token_from_url()
         return
     try:
@@ -475,6 +479,7 @@ def _restore_session() -> None:
             (token, client_id, time.time() - SESSION_TTL_SECONDS),
         ).fetchone()
         if not row:
+            st.session_state["_restore_note"] = "no_row"
             _drop_token_from_url()
             return
         conn.execute("UPDATE web_sessions SET seen_at = ? WHERE token = ?",
@@ -607,21 +612,6 @@ def _sidebar(user):
 
             _mail = email_status()
             _backend = "PostgreSQL" if db.active_backend() == "postgresql" else "SQLite (local file)"
-            # Whether Confirm/Cancel is the only way out of a modal depends on
-            # the installed Streamlit, not on this code: without `dismissible`
-            # support an outside click closes the dialog without running any
-            # button, and the pending action is re-offered next run. The person
-            # who can fix that (by upgrading) is the administrator reading this
-            # panel, so it says which semantics are in force. Students never see
-            # it; their modal behaves the same everywhere.
-            _dlg = st_compat.dialog_mode()
-            _dlg_line = (
-                "Confirm dialogs: exact-choice"
-                if _dlg == "exact-choice" else
-                "Confirm dialogs: dismissible (upgrade Streamlit for exact-choice)"
-                if _dlg == "dismissible" else
-                "Confirm dialogs: inline fallback (no st.dialog)"
-            )
             # Interpolated through esc() at the point of use. The static XSS gate
             # audits variable *names*, so it cannot see that this particular value
             # was escaped three lines above its assignment -- it only knows the
@@ -632,13 +622,13 @@ def _sidebar(user):
             if _mail["configured"]:
                 st.markdown(
                     f'<div class="sidebar-label">{i("check-circle", 12)} Deployment</div>'
-                    f'<div class="health-ok">Database: {esc(_backend)}<br>Email: configured<br>{esc(_dlg_line)}</div>',
+                    f'<div class="health-ok">Database: {esc(_backend)}<br>Email: configured</div>',
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
                     f'<div class="sidebar-label">{i("alert-triangle", 12)} Deployment</div>'
-                    f'<div class="health-ok">Database: {esc(_backend)}<br>{esc(_dlg_line)}</div>'
+                    f'<div class="health-ok">Database: {esc(_backend)}</div>'
                     f'<div class="health-bad">Email: not configured &mdash; password '
                     f'recovery is unavailable.<br>Missing: '
                     f'<code>{esc(", ".join(_mail["missing"]))}</code></div>',
@@ -658,6 +648,11 @@ def _sidebar(user):
             # where `_forget_session` reads the token from. Without this the
             # next refresh would restore the session the user just ended.
             _forget_session()
+            # And drop the token from the address bar with it. A stale token
+            # would otherwise make the next visit look like an expired session
+            # and earn a "please sign in again" hint for a sign-out the user
+            # chose deliberately.
+            _drop_token_from_url()
             st.session_state.clear()
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)

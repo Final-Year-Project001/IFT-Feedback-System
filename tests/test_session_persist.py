@@ -114,8 +114,46 @@ check("st_compat reports which dialog semantics are in force",
       callable(getattr(st_compat, "dialog_mode", None))
       and st_compat.dialog_mode() in ("exact-choice", "dismissible", "inline"),
       getattr(st_compat, "dialog_mode", lambda: "?")())
-check("...and the admin deployment panel shows it",
-      "dialog_mode()" in app_src and "_dlg_line" in app_src)
+
+# ══════════════════════════════════════════════════════════════
+section("3b. Every modal opens at the same moderate size")
+# ══════════════════════════════════════════════════════════════
+
+# The submit-confirmation modal ("small") is the reference users approved.
+# The two user-management modals used to open "large" and dominate the
+# screen; all four call sites are now small, so sizing is consistent and
+# every modal fits a phone without forcing horizontal scroll.
+import re  # noqa: E402
+
+_dialog_calls = []
+for _mod in ("components.py", "app_pages/user_management.py"):
+    _src = Path(_mod).read_text(encoding="utf-8")
+    _dialog_calls += re.findall(r"@st_compat\.dialog\(([^)]*)\)", _src)
+check("every dialog in the app opens small",
+      _dialog_calls and all('width="small"' in c for c in _dialog_calls),
+      _dialog_calls)
+check("no dialog still opens large", not any('width="large"' in c for c in _dialog_calls),
+      [c for c in _dialog_calls if "large" in c])
+
+# ══════════════════════════════════════════════════════════════
+section("3c. A failed restore says why instead of failing silently")
+# ══════════════════════════════════════════════════════════════
+
+# A refresh that arrives with a token but cannot honour it records the reason
+# (cookie vs row — never the token, never an account) so the login page can
+# explain it; signing out drops the token so a deliberate sign-out never
+# earns an "expired session" hint it did not ask for.
+check("_restore_session records why it could not restore",
+      app_src.count('_restore_note') >= 2, app_src.count("_restore_note"))
+check("...distinguishing a missing cookie from a missing row",
+      '"no_cookie"' in app_src and '"no_row"' in app_src)
+check("signing out drops the URL token as well as the row",
+      "_drop_token_from_url()" in app_src.split("Sign Out")[1][:1200]
+      if "Sign Out" in app_src else False)
+_login_src = Path("app_pages/login.py").read_text(encoding="utf-8")
+check("the login page shows the reason once, then drops it",
+      '_restore_note", None' in _login_src
+      and "no_cookie" in _login_src and "no_row" in _login_src)
 
 # ══════════════════════════════════════════════════════════════
 section("4. Persist -> refresh -> restore round-trips for real")

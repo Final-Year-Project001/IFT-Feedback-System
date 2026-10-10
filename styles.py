@@ -1316,6 +1316,26 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .confirm-dialog-warning > svg { flex-shrink: 0; margin-top: .1rem; }
 
 /* ═══════════════════════════
+   DIALOG ADAPTATION (every modal)
+
+   All four dialogs in the app (result, submit-confirm, delete-confirm,
+   restore-confirm) open at width="small": a moderate centred panel that
+   matches the praised submit-confirmation size. Streamlit's small modal
+   already shrinks to the viewport, so this block only trims OUR content —
+   tighter banner padding, a shorter scroll window for the delete summary,
+   and slightly smaller titles — so nothing inside the modal forces
+   horizontal scrolling on a phone. Two-button rows stay two-column
+   everywhere, matching the confirmed-good submit dialog.
+   ═══════════════════════════ */
+@media screen and (max-width: 576px) {
+    .confirm-dialog-title { font-size: .95rem; }
+    .confirm-dialog-intro { font-size: .8rem; }
+    .result-dialog-body { font-size: .88rem; }
+    .danger-banner { padding: .65rem .75rem; font-size: .78rem; }
+    .confirm-summary { max-height: 240px; }
+}
+
+/* ═══════════════════════════
    SEMESTER GATE (Rain / Harmattan)
 
    The picker and the "not active" explanation. The gate is a return, not a
@@ -1332,9 +1352,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 .semester-picker-hint { font-size: .74rem; color: var(--text-3); margin-top: .2rem; line-height: 1.5; }
 .semester-gate {
-    text-align: center; padding: 2rem 1.4rem 1.6rem;
+    text-align: center; padding: 1.6rem 1.2rem 1.4rem;
     background: var(--navy-card); border: 1px solid var(--navy-border);
     border-radius: var(--radius-lg);
+    /* A full-bleed explanation panel reads as an error page; centred and
+       capped it reads as a calm empty state with one clear action. */
+    max-width: 780px; margin-left: auto; margin-right: auto;
 }
 .semester-gate-icon {
     width: 64px; height: 64px; margin: 0 auto .9rem;
@@ -1343,6 +1366,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 .semester-gate-title { font-size: 1.05rem; font-weight: 800; color: var(--text-1); margin-bottom: .4rem; }
 .semester-gate-text { font-size: .85rem; line-height: 1.7; color: var(--text-2); max-width: 620px; margin: 0 auto; }
+@media screen and (max-width: 576px) {
+    .semester-gate { padding: 1.2rem 1rem 1.1rem; }
+    .semester-gate-title { font-size: .95rem; }
+    .semester-gate-text { font-size: .8rem; }
+}
 .course-semester-note {
     display: flex; align-items: center; gap: .45rem;
     font-size: .78rem; color: var(--text-2); line-height: 1.5;
@@ -1743,9 +1771,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .login-feature-grid {
     display: grid;
     gap: 0.85rem;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    /* Fixed pair on desktop (the reference design), one column once the
+       login columns stack — never an auto-fit guess, so a tile can neither
+       squeeze nor push its neighbours off screen. */
+    grid-template-columns: 1fr 1fr;
     margin-bottom: 1.6rem;
+    overflow-x: clip;
 }
+.login-feature-grid > * { min-width: 0; }
 .login-feature-card {
     background: #ffffff; border: 1px solid var(--navy-border2);
     border-radius: 14px; padding: 1.1rem 1.15rem;
@@ -1765,17 +1798,23 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .login-stat-value { font-size: 1.18rem; font-weight: 800; color: #0f172a; }
 .login-stat-label { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .09em; color: #64748b; margin-top: .25rem; font-weight: 600; }
 
-/* ── Decorative Dashboard Preview (Exact Reference UI) ── */
+/* ── Decorative Dashboard Preview (Exact Reference UI) ──
+   Three designed proportions — wide line chart, narrow donut, narrow stat
+   column — not three equal tracks. Equal tracks are what squeezed the line
+   chart and stranded the stat cards on narrow screens; explicit stages below
+   collapse 3 → 2 (+ full-row stat pair) → 1, deterministically. */
 .login-preview-card {
     display: grid;
     gap: 0.65rem;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: 2.1fr 1.4fr 1.15fr;
     background: var(--navy-card2);
     border: 1px solid var(--navy-border);
     border-radius: 16px;
     padding: 0.75rem;
     margin: 1rem 0 1.3rem 0;
+    overflow-x: clip;
 }
+.login-preview-card > * { min-width: 0; }
 .login-preview-tile {
     background: #ffffff;
     border: 1px solid var(--navy-border);
@@ -2070,7 +2109,16 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
         font-size: 2rem !important;
     }
     .login-preview-card {
-        grid-template-columns: 1.8fr 1.3fr 1.1fr;
+        grid-template-columns: 1.5fr 1fr;
+    }
+    /* The stat column stops being a third track and becomes a full-width row
+       of two cards — the only stage between the desktop trio and the phone
+       stack, so mid widths never get three squeezed columns. */
+    .login-preview-card .preview-stat-col {
+        grid-column: 1 / -1;
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem;
     }
 }
 
@@ -2306,6 +2354,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     }
     .preview-stat-col {
         flex-direction: column !important;
+        /* Pairs with the 1024px grid conversion above: without this the two
+           stat cards would stay two-across on a phone instead of stacking. */
+        grid-template-columns: 1fr !important;
     }
     .detail-row {
         flex-direction: column !important;
