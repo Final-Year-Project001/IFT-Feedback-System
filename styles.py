@@ -1359,14 +1359,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
        capped it reads as a calm empty state with one clear action. Compact
        padding throughout: the card carries one icon, one line of heading
        and three lines of text, so tall air around them reads as broken. */
-    max-width: 780px; margin: -.75rem auto 0 auto;
+    max-width: 780px; margin: -1.5rem auto 0 auto;
 }
 .semester-gate-icon {
     width: 48px; height: 48px; margin: 0 auto .7rem;
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
     background: rgba(217,119,6,.13);
 }
-.semester-gate-title { font-size: 1rem; font-weight: 800; color: var(--text-1); margin-bottom: .35rem; }
+.semester-gate-title { font-size: 1rem; font-weight: 800; color: var(--text-1); margin: 0 0 .35rem; }
 .semester-gate-text {
     font-size: .83rem; line-height: 1.65; color: var(--text-2);
     max-width: 620px; margin: 0 auto;
