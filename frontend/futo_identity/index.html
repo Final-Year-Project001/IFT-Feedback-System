@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 0; overflow: hidden; background: transparent; }
+  </style>
+</head>
+<body>
+<script>
+  /*
+   * futo_identity — a minimal, dependency-free Streamlit component.
+   *
+   * It reads (or, on a first visit, creates) a random per-browser secret in
+   * localStorage and hands it back to Python through the standard component
+   * message protocol.
+   *
+   * Why localStorage and not a cookie: a session refresh has to be bound to
+   * something the browser holds that a shared link cannot carry. Cookies would
+   * do, except Streamlit Community Cloud's proxy strips cookies (and most
+   * headers) from the WebSocket handshake, so `st.context.cookies` is empty
+   * there by design. localStorage is never proxied, so it survives intact.
+   *
+   * The value cannot be read synchronously, so Python sees it on the rerun
+   * this component triggers — one brief "Restoring…" run after a refresh.
+   */
+  (function () {
+    var KEY = "futo_client";
+
+    function post(type, payload) {
+      var msg = { isStreamlitMessage: true, type: type };
+      for (var k in payload) {
+        if (Object.prototype.hasOwnProperty.call(payload, k)) msg[k] = payload[k];
+      }
+      window.parent.postMessage(msg, "*");
+    }
+
+    // A 24-byte urlsafe random secret, generated fresh in the browser.
+    function randomId() {
+      var bytes = new Uint8Array(24);
+      (window.crypto || window.msCrypto).getRandomValues(bytes);
+      var s = "";
+      for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    function readOrCreate() {
+      try {
+        var existing = window.localStorage.getItem(KEY);
+        if (existing) return existing;
+        var fresh = randomId();
+        window.localStorage.setItem(KEY, fresh);
+        return fresh;
+      } catch (e) {
+        // Storage blocked (private mode or a locked-down browser). Hand back a
+        // value for this page load only; the session simply will not survive
+        // a refresh, which is the safe direction.
+        return randomId();
+      }
+    }
+
+    post("streamlit:componentReady", { apiVersion: 1 });
+    post("streamlit:setFrameHeight", { height: 0 });
+    post("streamlit:setComponentValue", { value: readOrCreate(), dataType: "json" });
+  })();
+</script>
+</body>
+</html>

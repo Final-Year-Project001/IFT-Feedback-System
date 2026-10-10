@@ -182,34 +182,40 @@ db.seed_admins(ADMIN_SEED_ACCOUNTS)
 # Sign-out deletes the row. Expired rows are swept on every write.
 
 import json
+import os
 import secrets
 import time
 
 _SESSION_PARAM = "futo_sess"        # query-param name carrying the token
 _SESSION_TOKEN_KEY = "futo_session_token"  # session_state mirror of it
-_CLIENT_COOKIE = "futo_client"      # per-browser secret, deliberately NOT in the URL
+_CLIENT_ID_KEY = "futo_client_id"   # session_state mirror of the browser secret
+_CLIENT_STORAGE_NAME = "futo_client"  # the localStorage key the component uses
 
-# ── Why a session needs two secrets, not one ───────────────────────────
+# ── Why a session needs two secrets, and how a shared link is stopped ──
 #
 # A token in the URL is a bearer credential: whoever holds the link holds the
 # session. That is exactly what the URL has to be for a session to survive a
-# refresh — there is no cookie and no storage API — but it also means the link
-# can be pasted into a chat and handed to someone else, who then loads the app
-# as the person who sent it and sees that account's dashboard, details and
-# feedback. That was reported from the field.
+# refresh — no synchronous storage API — but it also means the link can be
+# pasted into a chat and handed to someone else, who then loads the app as the
+# person who sent it and sees that account's dashboard, details and feedback.
+# That was reported from the field.
 #
-# So the token alone no longer authenticates anything. Every session row also
-# records a `client_id`, which lives in a cookie: browsers keep that out of the
-# address bar and never send it when a link is shared. Restoring a session now
-# requires BOTH to match the row.
+# So a session row also records a second, per-browser secret, and restoring
+# requires BOTH to match the row:
 #
-#   sender's own browser    token + cookie match    -> restored
-#   receiver opens the link  cookie absent or differs -> signed out, token dropped
+#   sender's own browser      token + secret match       -> restored
+#   receiver of a shared link token + DIFFERENT secret   -> signed out, token dropped
 #
-# The failure is deliberately in the safe direction. With cookies blocked,
-# nothing is ever restored and every visit starts at the login page: an
-# inconvenience, not an account compromise. `session_status()` reports which
-# mode is in force so an administrator can see which one they are getting.
+# The secret has to live where a link cannot carry it and the current page can
+# read on the next run. The URL is out (whatever is in the link is shared). A
+# cookie is out too: Streamlit Community Cloud's proxy strips cookies (and most
+# headers) from the WebSocket handshake, so the request context carries no
+# cookies there *by design*. A restore that demanded a cookie therefore found
+# no row and logged every user out on every refresh — the bug this replaces.
+# localStorage is never proxied, so it survives intact; a tiny same-origin
+# component (`frontend/futo_identity`) reads it and hands the value back on its
+# own rerun. `session_status()` reports what the browser ended up holding.
+
 
 # AppTest drives the script through a synthetic runner rather than the real
 # websocket one, and it advertises itself: every session it creates carries an
@@ -273,90 +279,84 @@ _SESSION_CLIENT_COLUMN = "ALTER TABLE web_sessions ADD COLUMN client_id TEXT"
 SESSION_TTL_SECONDS = 7 * 24 * 3600  # one week
 
 
-def _read_client_cookie() -> str:
-    """This browser's client id from its cookie, or "" if it has none.
+_IDENTITY_WAITS_KEY = "_identity_waits"  # runs spent waiting for the component
+_IDENTITY_KEY = "futo_identity"          # component widget key
+_IDENTITY_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "frontend", "futo_identity"
+)
 
-    Read through `st.context.cookies` rather than by parsing a header: that is
-    the supported accessor, and it returns an empty mapping when the context
-    does not carry one at all (a bare `import app`, or AppTest).
+
+@st.cache_resource
+def _identity_component():
+    """The localStorage reader, declared once per server process.
+
+    Declaring the component on every rerun would re-register it each time; the
+    cache keeps it to a single registration.
     """
-    try:
-        return str(st.context.cookies.get(_CLIENT_COOKIE, "") or "").strip()
-    except Exception:
+    import streamlit.components.v1 as components
+    return components.declare_component("futo_identity", path=_IDENTITY_DIR)
+
+
+def _browser_client_id() -> str:
+    """This browser's stored secret, or "" until the component reports it.
+
+    Returns "" under AppTest or a bare import, where there is no browser to
+    read from — callers treat that as "unknown", never as "no secret".
+    """
+    if _is_test_run():
         return ""
-
-
-def _mount_client_cookie(value: str) -> None:
-    """Instructs the browser to hold `value` as our client cookie.
-
-    Split out from `_mint_client_cookie` on purpose: minting (choosing a new
-    secret) must happen ONCE per browser, while mounting (telling the browser
-    the current secret) must happen on every run that cannot see a cookie —
-    the stored secret and the browser's copy only converge if the current
-    value is re-asserted. Mounting never changes the value, so unlike minting
-    it cannot desynchronise the persisted row; re-asserting the same value the
-    browser already holds is a harmless no-op there.
-    """
-    if _is_test_run() or not value:
-        return
     try:
-        import streamlit.components.v1 as components
-        components.html(
-            "<script>try{document.cookie="
-            f"'{_CLIENT_COOKIE}={value}; path=/; max-age=31536000; SameSite=Lax'"
-            ";}catch(e){}</script>",
-            height=0,
+        value = _identity_component()(key=_IDENTITY_KEY, default="")
+    except Exception:
+        value = ""
+    if not value:
+        try:
+            value = st.session_state.get(_IDENTITY_KEY, "")
+        except Exception:
+            value = ""
+    return str(value or "").strip()
+
+
+def _render_restoring() -> None:
+    """The quiet placeholder for the single run spent reading the secret.
+
+    Styling is inline on purpose: this run happens before `main()` injects the
+    global stylesheet, and a bare unstyled line flashing on every refresh would
+    look like a glitch. The type floor (0.95rem) matches the app's body scale.
+    """
+    try:
+        st.markdown(
+            '<div style="display:flex;align-items:center;justify-content:center;'
+            'min-height:55vh;font-size:0.95rem;color:#64748b;'
+            'letter-spacing:0.01em;font-family:inherit">'
+            'Restoring your session…</div>',
+            unsafe_allow_html=True,
         )
     except Exception:
-        # If the component cannot be mounted, no cookie is written and the
-        # session simply never persists. Nothing else breaks.
         pass
 
 
-def _mint_client_cookie() -> None:
-    """Write a fresh client id into this browser's cookie.
-
-    Streamlit's Python API can read cookies but not set them, so the write is
-    done in the page through a same-origin component iframe — Streamlit mounts
-    it with `allow-scripts allow-same-origin`, which is exactly the combination
-    that lets `document.cookie` reach the app's own origin.
-
-    The value is also kept in `session_state` so that everything downstream in
-    *this* run agrees on one id. The cookie is what the next FRESH LOAD reads
-    back (a mid-session rerun still sees only the handshake snapshot) — which
-    is why a first-time visitor cannot be signed in by a token they did not earn.
-    """
-    if _is_test_run():
-        return
-    value = secrets.token_urlsafe(32)
-    st.session_state[_CLIENT_COOKIE] = value
-    _mount_client_cookie(value)
-
-
 def session_status() -> dict:
-    """Which persistence mode this browser is in. Surfaced in the admin health panel.
+    """Which persistence mode this browser is in (used by the tests).
 
-    Two separate facts, because they answer different questions: what the
-    server can see *right now* (the handshake snapshot — empty on every
-    mid-session rerun even when the browser holds the cookie), and what this
-    tab session holds (the secret a refresh will be restored against, once the
-    browser has echoed it back). Either one present means a refresh can
-    restore; neither means the next refresh starts at the login page.
+    One fact matters: whether this tab session holds the browser's secret. A
+    refresh is restored only when the URL token AND that secret match the stored
+    row, which is what stops a shared link. The secret comes from localStorage
+    via the identity component, not a cookie, because Streamlit Community
+    Cloud's proxy strips cookies from the WebSocket handshake.
     """
-    seen = bool(_read_client_cookie())
     try:
-        held = bool(st.session_state.get(_CLIENT_COOKIE, ""))
+        held = bool(st.session_state.get(_CLIENT_ID_KEY, ""))
     except Exception:
         # No session context at all (a bare `import app`): nothing is held.
         held = False
     return {
         "url_token_bound": True,
-        "browser_cookie_bound": seen,
-        "session_holds_id": held,
-        "mode": ("token + browser cookie" if seen
-                 else "token held, cookie syncing" if held
-                 else "not bound yet (sign-in must be repeated)"),
-        "cookie_name": _CLIENT_COOKIE,
+        "browser_storage_bound": held,
+        "mode": ("token + browser secret (localStorage)"
+                 if held else "token held, browser secret not read yet"),
+        "storage": "localStorage",
+        "storage_key": _CLIENT_STORAGE_NAME,
     }
 
 
@@ -439,22 +439,19 @@ def _claim_token_for(username: str) -> None:
 
 
 def _persist_session(username: str, payload: dict) -> bool:
-    """Writes this browser's auth state, keyed by its own token AND its cookie.
+    """Writes this browser's auth state, keyed by its own token AND its secret.
 
     Returns True when a row for this browser exists afterwards, False when
-    nothing was written. A sign-in landing on False (no token, or an
-    unwritable store) must be healable on a later run, and `main()` uses this
-    return for exactly that.
+    nothing was written. A sign-in landing on False (no token, or an unwritable
+    store) must be healable on a later run, and `main()` uses this return for
+    exactly that.
 
-    The row is bound to the `client_id` held in session_state — a fresh
-    secret per browser that never appears in the URL. It is deliberately NOT
-    required that the browser has echoed the cookie back yet: `st.context`
-    only reflects the cookies of the *initial* websocket handshake, so a
-    cookie written during this visit is invisible to the server until a fresh
-    page load. Demanding readability at write time made every sign-in's write
-    a silent skip and every refresh a logout. The check that actually stops a
-    shared link — token AND cookie must match the row — lives in
-    `_restore_session`, where both values are verifiable, and is unchanged.
+    The row is bound to the per-browser secret in `localStorage`, mirrored into
+    session_state by `_establish_browser_identity` once the identity component
+    reports it. The URL token alone is never enough to restore — that is the
+    whole point of recording the secret, and it is what stops a copied link.
+    Writing a row without the secret would create exactly the shareable session
+    this is meant to prevent, so a missing secret is a refusal, not a fallback.
 
     A no-op under AppTest, where query params and the websocket are both
     synthetic: there is no browser to keep signed in, and honouring the row
@@ -466,7 +463,7 @@ def _persist_session(username: str, payload: dict) -> bool:
     token = st.session_state.get(_SESSION_TOKEN_KEY, "")
     if not token:
         return False
-    client_id = st.session_state.get(_CLIENT_COOKIE, "")
+    client_id = st.session_state.get(_CLIENT_ID_KEY, "")
     if not client_id:
         return False
     _claim_token_for(username)
@@ -513,48 +510,46 @@ def _drop_token_from_url() -> None:
 def _restore_session() -> None:
     """Reloads this browser's auth state, if it signed in before.
 
-    Requires the URL token *and* the browser cookie to match the stored row. A
-    link pasted into someone else's browser has a token but no matching cookie,
-    so it resolves to no session and the receiver lands on the login page — see
-    the note on `_CLIENT_COOKIE`.
+    A refresh is honoured only when BOTH credentials match the stored row: the
+    token in the URL, which is what makes a refresh possible at all, and the
+    per-browser secret in `localStorage`, which a shared link cannot carry.
+    Either one alone gives a receiver of a copied link nothing.
+
+    The secret cannot be read synchronously — the identity component has to run
+    in the browser and report back on its own rerun — so on the first run of a
+    fresh page load it is not known yet. That run deliberately STOPS and waits
+    rather than fall through and trust the bare token while it waits, because
+    trusting the bare token is precisely the shared-link hole this closes. If
+    the component never reports (storage disabled in the browser), the session
+    is dropped and the person signs in again: failing closed, never open.
 
     Re-reads the user from the `users` table rather than trusting the stored
     payload, so a deleted account cannot keep a session alive and a changed
     role takes effect immediately.
-
-    Reads the token from the URL and the client_id from the cookie directly,
-    because on a fresh render (page refresh) `st.session_state` is empty — it
-    is populated from these sources *during* this function, not before it.
     """
     if _is_test_run():
         return
-    # On a fresh render, session_state is empty. Read the sources of truth:
-    # the token from the URL, and the client_id from the cookie.
+    # On a fresh render session_state is empty; the token is the one source of
+    # truth that is available immediately, so read it from the URL.
     try:
         token = st.query_params.get(_SESSION_PARAM, "")
     except Exception:
         token = ""
-    client_id = _read_client_cookie()
-    # Mirror into session_state so downstream code in this run sees them —
-    # but only ADOPT non-empty values. Blanket-overwriting here used to blank
-    # an established client id on every mid-session rerun (whose handshake
-    # snapshot carries no cookies), desynchronising the persisted row exactly
-    # the way re-minting did.
     st.session_state[_SESSION_TOKEN_KEY] = token
-    if client_id:
-        st.session_state[_CLIENT_COOKIE] = client_id
     if not token:
         return
+    # `_establish_browser_identity` ran first and mirrored the secret into
+    # session_state if the component had already reported it. If it has not,
+    # wait a couple of runs for that report instead of trusting the token alone.
+    client_id = st.session_state.get(_CLIENT_ID_KEY, "")
     if not client_id:
-        # No readable cookie. This proves nothing either way: `st.context`
-        # only carries the cookies of the initial websocket handshake, so any
-        # cookie written during this visit is invisible until a fresh page
-        # load — and a genuinely foreign link looks exactly the same. Either
-        # way the safe action is identical (restore nothing) and, crucially,
-        # the token is LEFT in the URL: dropping it here used to destroy
-        # legitimate mid-session tokens on every single rerun, guaranteeing
-        # the logout-on-refresh it was meant to tidy up. A foreign token
-        # simply matches no row, on this run and every later one.
+        waits = int(st.session_state.get(_IDENTITY_WAITS_KEY, 0) or 0)
+        if waits < 3:
+            st.session_state[_IDENTITY_WAITS_KEY] = waits + 1
+            _render_restoring()
+            st.stop()
+        # The component never reported. Do not trust a bare token; leave the
+        # URL untouched so a later working load can still use it.
         return
     try:
         conn = db.get_db()
@@ -565,7 +560,17 @@ def _restore_session() -> None:
             (token, client_id, time.time() - SESSION_TTL_SECONDS),
         ).fetchone()
         if not row:
-            _drop_token_from_url()
+            # Clear the address bar only when the token provably belongs to a
+            # DIFFERENT browser — a row exists for it under some other secret.
+            # A token with no row at all may be one this page load just minted
+            # on its way to the login form; erasing that one would leave the
+            # sign-in binding to a token no longer in the URL, and the next
+            # refresh would have nothing to restore.
+            owned = conn.execute(
+                "SELECT 1 FROM web_sessions WHERE token = ?", (token,)
+            ).fetchone()
+            if owned:
+                _drop_token_from_url()
             return
         conn.execute("UPDATE web_sessions SET seen_at = ? WHERE token = ?",
                      (time.time(), token))
@@ -608,35 +613,25 @@ def _forget_session() -> None:
         pass
 
 
-# Establish the browser identity before anything reads a token, because the
-# restore below needs both. Three cases, and the order is the logic:
+# Mirror the browser's own secret into session_state before anything reads a
+# token, because the restore below needs both. The identity component reports
+# on its own rerun, so:
 #
-#   1. The handshake carries a cookie AND this tab session holds nothing:
-#      a fresh load by a returning browser — adopt the jar's value.
-#   2. This tab session holds nothing and there is nothing to adopt: a
-#      genuinely new browser — mint once and mount it.
-#   3. This tab session already holds an id: adopt nothing (a jar value here
-#      could be another tab's), mint nothing (re-minting every run churned the
-#      browser's cookie out from under the persisted row, which is what made
-#      every refresh log the user out) — but DO re-mount the held value, so a
-#      jar that never received it (claim-mint, slow iframe, cleared cookies)
-#      converges onto it. Re-asserting an identical value is a no-op where the
-#      browser already holds it.
+#   * first run of a fresh page load — nothing is stored yet; the component is
+#     mounted and will report on the next run;
+#   * the run after — the secret is stored, and every later reader in this tab
+#     session (restore, sign-in) uses the same one.
+#
+# It is stored ONCE and never re-minted: re-minting would churn the secret out
+# from under the persisted row, which is what made every refresh log the user
+# out. The component itself is the only thing that creates the secret, and only
+# the first time a browser ever visits.
 def _establish_browser_identity() -> None:
-    _client_from_cookie = _read_client_cookie()
-    try:
-        _held_id = st.session_state.get(_CLIENT_COOKIE, "")
-    except Exception:
-        # No session context at all (a bare `import app`): behave as a tab
-        # session holding nothing, and let `_is_test_run()` decide below.
-        _held_id = ""
-    if _client_from_cookie and not _held_id:
-        st.session_state[_CLIENT_COOKIE] = _client_from_cookie
-    elif not _held_id:
-        if not _is_test_run():
-            _mint_client_cookie()
-    elif not _is_test_run() and not _client_from_cookie:
-        _mount_client_cookie(_held_id)
+    if _is_test_run():
+        return
+    client_id = _browser_client_id()
+    if client_id:
+        st.session_state[_CLIENT_ID_KEY] = client_id
 
 
 _establish_browser_identity()

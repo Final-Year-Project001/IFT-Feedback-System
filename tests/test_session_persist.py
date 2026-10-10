@@ -2,9 +2,9 @@
 
 Scope — what this file is FOR:
 
-Two holes, both found by reading rather than by a failing test, because the
+Three holes, all found by reading rather than by a failing test, because the
 whole persistence layer switches itself off under AppTest (`_is_test_run`) —
-so no existing suite could see either one:
+so no existing suite could see them:
 
   1. Registration never persisted. The register path set `password_correct`,
      `username` and `user` directly and never wrote a `web_sessions` row, so
@@ -13,21 +13,25 @@ so no existing suite could see either one:
      did persist; registration did not.
 
   2. The sign-in persist was one-shot. `_persist_session` runs at sign-in and
-     must skip when the browser's cookie is not readable yet — the iframe that
-     writes it may not have executed on that exact run. Nothing ever retried,
-     so that miss was permanent: every later refresh dropped the user until
-     they signed in again.
+     must skip when the browser's secret is not known yet — the identity
+     component reports it on its own rerun. Nothing ever retried, so that miss
+     was permanent: every later refresh dropped the user until they signed in
+     again.
 
-The fixes: registration persists like sign-in does, and `main()` retries the
-persist on later runs while signed in (flagged by `_session_persist_ok`, so at
-most one write per browser session). The binding is unchanged — a row is still
-only written when BOTH the URL token and the cookie are readable here — so
-`test_session_binding.py`'s fail-closed properties still hold.
+  3. A refresh on Streamlit Community Cloud could never restore, because the
+     platform proxy strips handshake cookies and the old binding demanded one.
+
+The fixes: registration persists like sign-in does; `main()` retries the persist
+on later runs while signed in (flagged by `_session_persist_ok`, so at most one
+write per browser session); and the browser binding moved from a cookie to a
+`localStorage` secret read by a tiny component, which is not proxied and so
+survives on Cloud. A restore now demands BOTH the URL token AND that secret, so
+a copied link is refused. See `test_session_binding.py` for the read-side SQL.
 
 The functional half below drives the REAL `_persist_session` /
-`_restore_session` through probe scripts under AppTest, with only the two
-browser-only sources faked (the test-run gate and the cookie reader). The URL
-token and session_state are the genuine articles.
+`_restore_session` through probe scripts under AppTest, with only the
+browser-only sources faked (the test-run gate and the browser secret reader).
+The URL token and session_state are the genuine articles.
 
 Run: .venv\\Scripts\\python.exe tests\\test_session_persist.py
 """
@@ -103,11 +107,11 @@ persist_src = app_src.split("def _persist_session")[1].split("\ndef ")[0]
 check("_persist_session reports whether the row exists afterwards",
       "-> bool" in app_src.split("def _persist_session")[1][:60]
       and "return True" in persist_src and "return False" in persist_src)
-check("...refusing only a genuinely unbound write (no token or no client)",
+check("...refusing only a genuinely unbound write (no token or no secret)",
       "if not token" in persist_src and "if not client_id" in persist_src)
-check("...without demanding the cookie be echoed back first",
-      "_read_client_cookie()" not in persist_src,
-      "st.context only sees handshake cookies, so that gate skips every write")
+check("...taking the secret from the component, never from a cookie",
+      "_CLIENT_ID_KEY" in persist_src and "st.context.cookies" not in persist_src,
+      "a cookie is stripped by Cloud's proxy and cannot be the credential")
 
 # ══════════════════════════════════════════════════════════════
 section("3. The dialog modality is visible where it can be fixed")
@@ -174,12 +178,10 @@ with open(PROBE_PERSIST, "w", encoding="utf-8") as fh:
         "db.get_db.clear()\n"
         "import app as appmod\n"
         "appmod._is_test_run = lambda: False\n"
-        # The browser has NOT echoed the cookie back: st.context only sees
-        # handshake cookies, so mid-visit this is always empty. The write must
-        # land anyway, bound to the session_state secret.
-        "appmod._read_client_cookie = lambda: ''\n"
+        # The browser secret has been reported by the component into
+        # session_state; the write must land bound to it.
         "st.session_state[appmod._SESSION_TOKEN_KEY] = 'probe-token-1'\n"
-        "st.session_state[appmod._CLIENT_COOKIE] = 'probe-client-1'\n"
+        "st.session_state[appmod._CLIENT_ID_KEY] = 'probe-client-1'\n"
         "ok = appmod._persist_session('PersistProbe', {'t': 1.0})\n"
         "conn = db.get_db()\n"
         "row = conn.execute(\n"
@@ -193,9 +195,9 @@ with open(PROBE_PERSIST, "w", encoding="utf-8") as fh:
 
 at = AppTest.from_file(PROBE_PERSIST, default_timeout=120).run()
 out = dict(at.session_state.get("probe_out") or {})
-check("persist lands with no echoed cookie (bound, not blocked)",
+check("persist lands, bound to the browser secret",
       out.get("persisted") is True, out)
-check("...bound to the token AND the session_state client",
+check("...bound to the token AND the session_state secret",
       out.get("row") == ["PersistProbe", "probe-client-1"], out.get("row"))
 check("no exception in the persist path",
       not list(at.exception), [str(e.value)[:120] for e in at.exception])
@@ -211,7 +213,6 @@ with open(PROBE_CLAIM, "w", encoding="utf-8") as fh:
         "db.get_db.clear()\n"
         "import app as appmod\n"
         "appmod._is_test_run = lambda: False\n"
-        "appmod._read_client_cookie = lambda: ''\n"
         "conn = db.get_db()\n"
         "try:\n"
         "    conn.execute(appmod._SESSION_TABLE_DDL)\n"
@@ -225,7 +226,7 @@ with open(PROBE_CLAIM, "w", encoding="utf-8") as fh:
         "conn.commit()\n"
         # Bob opens a link carrying SomeoneElse's token and signs in.
         "st.session_state[appmod._SESSION_TOKEN_KEY] = 'probe-token-2'\n"
-        "st.session_state[appmod._CLIENT_COOKIE] = 'bob-client'\n"
+        "st.session_state[appmod._CLIENT_ID_KEY] = 'bob-client'\n"
         "ok = appmod._persist_session('PersistProbe', {'t': 2.0})\n"
         "new_token = st.session_state.get(appmod._SESSION_TOKEN_KEY)\n"
         "alice = conn.execute(\n"
@@ -264,32 +265,32 @@ with open(PROBE_STABLE, "w", encoding="utf-8") as fh:
         "db.get_db.clear()\n"
         "import app as appmod\n"
         "appmod._is_test_run = lambda: False\n"
-        # Frozen handshake snapshot: the jar may hold anything by now, but the
-        # server cannot see it mid-visit. Three consecutive runs must not move
-        # the held id a millimetre - that churn is what broke every refresh.
-        "appmod._read_client_cookie = lambda: ''\n"
-        "st.session_state[appmod._CLIENT_COOKIE] = 'stable-client-7'\n"
+        # The component always returns the SAME stored value while it is known.
+        # Three consecutive establishes must not move it a millimetre -- that
+        # churn is what broke every refresh.
+        "appmod._browser_client_id = lambda: 'stable-client-7'\n"
         "appmod._establish_browser_identity()\n"
-        "after_first = st.session_state.get(appmod._CLIENT_COOKIE)\n"
+        "after_first = st.session_state.get(appmod._CLIENT_ID_KEY)\n"
         "appmod._establish_browser_identity()\n"
         "appmod._establish_browser_identity()\n"
-        "after_third = st.session_state.get(appmod._CLIENT_COOKIE)\n"
-        "st.session_state.pop(appmod._CLIENT_COOKIE, None)\n"
-        "appmod._read_client_cookie = lambda: 'jar-client-9'\n"
+        "after_third = st.session_state.get(appmod._CLIENT_ID_KEY)\n"
+        # A component that has not reported yet must store nothing, not invent.
+        "st.session_state.pop(appmod._CLIENT_ID_KEY, None)\n"
+        "appmod._browser_client_id = lambda: ''\n"
         "appmod._establish_browser_identity()\n"
-        "adopted = st.session_state.get(appmod._CLIENT_COOKIE)\n"
+        "not_reported = st.session_state.get(appmod._CLIENT_ID_KEY)\n"
         "st.session_state['probe_out'] = {\n"
         "    'stable': after_first == 'stable-client-7' == after_third,\n"
-        "    'adopted': adopted,\n"
+        "    'not_reported': not_reported in (None, ''),\n"
         "}\n"
     )
 
 ats = AppTest.from_file(PROBE_STABLE, default_timeout=120).run()
 outs = dict(ats.session_state.get("probe_out") or {})
-check("reruns never churn an established client id",
+check("reruns never churn an established browser secret",
       outs.get("stable") is True, outs)
-check("...while a fresh load still adopts the jar's value",
-      outs.get("adopted") == "jar-client-9", outs)
+check("...while a component that has not reported yet stores nothing",
+      outs.get("not_reported") is True, outs)
 check("no exception in the identity path",
       not list(ats.exception), [str(e.value)[:120] for e in ats.exception])
 
@@ -304,31 +305,52 @@ with open(PROBE_RESTORE, "w", encoding="utf-8") as fh:
         "db.get_db.clear()\n"
         "import app as appmod\n"
         "appmod._is_test_run = lambda: False\n"
-        "appmod._read_client_cookie = lambda: 'probe-client-1'\n"
-        "st.query_params[appmod._SESSION_PARAM] = 'probe-token-1'\n"
+        "def _reset():\n"
+        "    for _k in ('password_correct', 'username', 'user'):\n"
+        "        st.session_state.pop(_k, None)\n"
+        "def _seed():\n"
+        "    st.query_params[appmod._SESSION_PARAM] = 'probe-token-1'\n"
+        # Case A: the sender's own browser -- the stored secret matches the row.
+        "_seed()\n"
+        "st.session_state[appmod._CLIENT_ID_KEY] = 'probe-client-1'\n"
         "appmod._restore_session()\n"
-        "first = {\n"
-        "    'signed_in': st.session_state.get('password_correct') is True,\n"
-        "    'username': st.session_state.get('username'),\n"
-        "}\n"
-        "appmod._read_client_cookie = lambda: 'someone-elses-cookie'\n"
-        "for _k in ('password_correct', 'username', 'user'):\n"
-        "    st.session_state.pop(_k, None)\n"
+        "own = {'signed_in': st.session_state.get('password_correct') is True,\n"
+        "       'username': st.session_state.get('username')}\n"
+        # Case B: a browser holding ITS OWN different secret must be refused,
+        # and the borrowed token dropped from the address bar.
+        "_reset()\n"
+        "st.session_state[appmod._CLIENT_ID_KEY] = 'someone-elses-secret'\n"
         "appmod._restore_session()\n"
+        "receiver_signed_in = st.session_state.get('password_correct') is True\n"
+        "borrowed_token_dropped = st.query_params.get(appmod._SESSION_PARAM, '') == ''\n"
+        # Case C: the secret is not known yet and waiting is exhausted -- fail
+        # closed rather than trust the bare token.
+        "_reset()\n"
+        "_seed()\n"
+        "st.session_state[appmod._CLIENT_ID_KEY] = ''\n"
+        "st.session_state[appmod._IDENTITY_WAITS_KEY] = 3\n"
+        "appmod._restore_session()\n"
+        "unknown_signed_in = st.session_state.get('password_correct') is True\n"
         "st.session_state['probe_out'] = {\n"
-        "    'first': first,\n"
-        "    'receiver_signed_in': st.session_state.get('password_correct') is True,\n"
+        "    'own': own,\n"
+        "    'receiver_signed_in': receiver_signed_in,\n"
+        "    'borrowed_token_dropped': borrowed_token_dropped,\n"
+        "    'unknown_signed_in': unknown_signed_in,\n"
         "}\n"
     )
 
 at2 = AppTest.from_file(PROBE_RESTORE, default_timeout=120).run()
 out2 = dict(at2.session_state.get("probe_out") or {})
-first = out2.get("first") or {}
-check("a refresh with token + cookie restores the user",
-      first.get("signed_in") is True and first.get("username") == "PersistProbe",
+own = out2.get("own") or {}
+check("a refresh with token + matching secret restores the user",
+      own.get("signed_in") is True and own.get("username") == "PersistProbe",
       out2)
-check("...and a copied link on another cookie still restores nothing",
+check("...a browser with its OWN different secret still restores nothing",
       out2.get("receiver_signed_in") is not True, out2)
+check("...and the borrowed token is dropped from the address bar",
+      out2.get("borrowed_token_dropped") is True, out2)
+check("...a not-yet-known secret fails closed instead of trusting the token",
+      out2.get("unknown_signed_in") is not True, out2)
 check("no exception in the restore path",
       not list(at2.exception), [str(e.value)[:120] for e in at2.exception])
 
