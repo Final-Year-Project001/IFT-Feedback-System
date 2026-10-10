@@ -401,7 +401,7 @@ def _render_inactive_semester_gate(active_sess: str, chosen: str, active_semeste
     """
     st.markdown(
         f'<div class="semester-gate">'
-        f'<div class="semester-gate-icon">{i("calendar", 34, "#b45309")}</div>'
+        f'<div class="semester-gate-icon">{i("calendar", 28, "#b45309")}</div>'
         f'<h3 class="semester-gate-title">The {esc(chosen)} semester is not active</h3>'
         f'<p class="semester-gate-text">Feedback for the <strong>{esc(active_sess)}</strong> '
         f'academic session is currently open for the <strong>{esc(active_semester)}</strong> '
@@ -410,10 +410,10 @@ def _render_inactive_semester_gate(active_sess: str, chosen: str, active_semeste
         f'</div>',
         unsafe_allow_html=True,
     )
-    # Centred and capped: a full-bleed gradient bar reads as a banner, not an
-    # action. The middle column carries the button; the gutters collapse on a
-    # phone, where full width is correct again.
-    _, _switch_col, _ = st.columns([1, 2, 1])
+    # Centred and moderate: a full-bleed gradient bar reads as a banner, not
+    # an action. The middle column carries the button; the gutters collapse
+    # on a phone, where full width is correct again.
+    _, _switch_col, _ = st.columns([1, 1, 1])
     with _switch_col:
         if st_compat.button(
             f"Switch to {active_semester} and continue",

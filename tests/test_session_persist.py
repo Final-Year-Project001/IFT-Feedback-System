@@ -103,8 +103,11 @@ persist_src = app_src.split("def _persist_session")[1].split("\ndef ")[0]
 check("_persist_session reports whether the row exists afterwards",
       "-> bool" in app_src.split("def _persist_session")[1][:60]
       and "return True" in persist_src and "return False" in persist_src)
-check("...still refusing to write with no readable cookie",
-      persist_src.index("_read_client_cookie()") < persist_src.index("INSERT"))
+check("...refusing only a genuinely unbound write (no token or no client)",
+      "if not token" in persist_src and "if not client_id" in persist_src)
+check("...without demanding the cookie be echoed back first",
+      "_read_client_cookie()" not in persist_src,
+      "st.context only sees handshake cookies, so that gate skips every write")
 
 # ══════════════════════════════════════════════════════════════
 section("3. The dialog modality is visible where it can be fixed")
@@ -136,24 +139,19 @@ check("no dialog still opens large", not any('width="large"' in c for c in _dial
       [c for c in _dialog_calls if "large" in c])
 
 # ══════════════════════════════════════════════════════════════
-section("3c. A failed restore says why instead of failing silently")
+section("3c. Sign-out leaves no stale token behind")
 # ══════════════════════════════════════════════════════════════
 
-# A refresh that arrives with a token but cannot honour it records the reason
-# (cookie vs row — never the token, never an account) so the login page can
-# explain it; signing out drops the token so a deliberate sign-out never
-# earns an "expired session" hint it did not ask for.
-check("_restore_session records why it could not restore",
-      app_src.count('_restore_note') >= 2, app_src.count("_restore_note"))
-check("...distinguishing a missing cookie from a missing row",
-      '"no_cookie"' in app_src and '"no_row"' in app_src)
+# Signing out drops the row and the URL token together, so the next visit is
+# a clean first visit rather than a session that looks expired. (An earlier
+# revision showed the failure reason on the login page; that banner is gone
+# by request — the page is back to exactly what it was.)
 check("signing out drops the URL token as well as the row",
       "_drop_token_from_url()" in app_src.split("Sign Out")[1][:1200]
       if "Sign Out" in app_src else False)
 _login_src = Path("app_pages/login.py").read_text(encoding="utf-8")
-check("the login page shows the reason once, then drops it",
-      '_restore_note", None' in _login_src
-      and "no_cookie" in _login_src and "no_row" in _login_src)
+check("the login page carries no restore banner",
+      "_restore_note" not in _login_src, "banner removed by request")
 
 # ══════════════════════════════════════════════════════════════
 section("4. Persist -> refresh -> restore round-trips for real")
@@ -176,7 +174,10 @@ with open(PROBE_PERSIST, "w", encoding="utf-8") as fh:
         "db.get_db.clear()\n"
         "import app as appmod\n"
         "appmod._is_test_run = lambda: False\n"
-        "appmod._read_client_cookie = lambda: 'probe-client-1'\n"
+        # The browser has NOT echoed the cookie back: st.context only sees
+        # handshake cookies, so mid-visit this is always empty. The write must
+        # land anyway, bound to the session_state secret.
+        "appmod._read_client_cookie = lambda: ''\n"
         "st.session_state[appmod._SESSION_TOKEN_KEY] = 'probe-token-1'\n"
         "st.session_state[appmod._CLIENT_COOKIE] = 'probe-client-1'\n"
         "ok = appmod._persist_session('PersistProbe', {'t': 1.0})\n"
@@ -192,11 +193,65 @@ with open(PROBE_PERSIST, "w", encoding="utf-8") as fh:
 
 at = AppTest.from_file(PROBE_PERSIST, default_timeout=120).run()
 out = dict(at.session_state.get("probe_out") or {})
-check("persist reports the row exists afterwards", out.get("persisted") is True, out)
-check("...bound to the token AND the cookie",
+check("persist lands with no echoed cookie (bound, not blocked)",
+      out.get("persisted") is True, out)
+check("...bound to the token AND the session_state client",
       out.get("row") == ["PersistProbe", "probe-client-1"], out.get("row"))
 check("no exception in the persist path",
       not list(at.exception), [str(e.value)[:120] for e in at.exception])
+
+PROBE_CLAIM = os.path.join(TMP, "probe_claim.py")
+with open(PROBE_CLAIM, "w", encoding="utf-8") as fh:
+    fh.write(
+        "import sys\n"
+        f"sys.path.insert(0, {ROOT!r})\n"
+        "import streamlit as st\n"
+        "import db\n"
+        f"db.DB_PATH = {COPY!r}\n"
+        "db.get_db.clear()\n"
+        "import app as appmod\n"
+        "appmod._is_test_run = lambda: False\n"
+        "appmod._read_client_cookie = lambda: ''\n"
+        "conn = db.get_db()\n"
+        "try:\n"
+        "    conn.execute(appmod._SESSION_TABLE_DDL)\n"
+        "    conn.commit()\n"
+        "except Exception:\n"
+        "    pass\n"
+        "conn.execute(\n"
+        "    'INSERT INTO web_sessions (token, username, payload, created_at, seen_at, client_id)'\n"
+        "    ' VALUES (?,?,?,?,?,?)',\n"
+        "    ('probe-token-2', 'SomeoneElse', '{}', 1.0, 9999999999.0, 'alice-client'))\n"
+        "conn.commit()\n"
+        # Bob opens a link carrying SomeoneElse's token and signs in.
+        "st.session_state[appmod._SESSION_TOKEN_KEY] = 'probe-token-2'\n"
+        "st.session_state[appmod._CLIENT_COOKIE] = 'bob-client'\n"
+        "ok = appmod._persist_session('PersistProbe', {'t': 2.0})\n"
+        "new_token = st.session_state.get(appmod._SESSION_TOKEN_KEY)\n"
+        "alice = conn.execute(\n"
+        "    'SELECT username, client_id FROM web_sessions WHERE token = ?',\n"
+        "    ('probe-token-2',)).fetchone()\n"
+        "bob = conn.execute(\n"
+        "    'SELECT username FROM web_sessions WHERE token = ? AND client_id = ?',\n"
+        "    (new_token, 'bob-client')).fetchone() if new_token != 'probe-token-2' else None\n"
+        "st.session_state['probe_out'] = {\n"
+        "    'persisted': bool(ok),\n"
+        "    'fresh_token': new_token != 'probe-token-2',\n"
+        "    'alice_intact': list(alice) == ['SomeoneElse', 'alice-client'] if alice else False,\n"
+        "    'bob_row': list(bob) == ['PersistProbe'] if bob else False,\n"
+        "}\n"
+    )
+
+atc = AppTest.from_file(PROBE_CLAIM, default_timeout=120).run()
+outc = dict(atc.session_state.get("probe_out") or {})
+check("signing in under another user's token mints a fresh one",
+      outc.get("persisted") is True and outc.get("fresh_token") is True, outc)
+check("...leaving the sender's row untouched",
+      outc.get("alice_intact") is True, outc)
+check("...with the new account bound under the fresh token",
+      outc.get("bob_row") is True, outc)
+check("no exception in the claim path",
+      not list(atc.exception), [str(e.value)[:120] for e in atc.exception])
 
 PROBE_RESTORE = os.path.join(TMP, "probe_restore.py")
 with open(PROBE_RESTORE, "w", encoding="utf-8") as fh:

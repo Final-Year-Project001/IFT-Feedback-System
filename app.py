@@ -369,13 +369,60 @@ def _ensure_session_schema(conn) -> None:
             pass
 
 
+def _claim_token_for(username: str) -> None:
+    """Re-mints the browser token when it belongs to somebody else.
+
+    A copied link carries its sender's token. The receiver's browser keeps
+    that token in the URL — and, since this run, in `session_state` too. If
+    the receiver then signs in, persisting under that token would OVERWRITE
+    the sender's row with the receiver's account: the sender's session would
+    be destroyed, and the receiver would sit on a token the sender still has
+    bookmarked. So before any write, the token's current owner is read; a
+    token owned by anyone but this user is replaced with a fresh one (URL and
+    mirror together), and the write that follows cannot collide with it.
+
+    Best-effort like everything here: if the lookup itself fails, the write
+    proceeds under the existing token rather than blocking the sign-in.
+    """
+    if _is_test_run():
+        return
+    token = st.session_state.get(_SESSION_TOKEN_KEY, "")
+    if not token:
+        return
+    try:
+        conn = db.get_db()
+        _ensure_session_schema(conn)
+        row = conn.execute(
+            "SELECT username FROM web_sessions WHERE token = ?", (token,)
+        ).fetchone()
+    except Exception:
+        return
+    if row and (row[0] or "") != (username or ""):
+        fresh = secrets.token_urlsafe(32)
+        try:
+            st.query_params[_SESSION_PARAM] = fresh
+        except Exception:
+            pass
+        st.session_state[_SESSION_TOKEN_KEY] = fresh
+
+
 def _persist_session(username: str, payload: dict) -> bool:
     """Writes this browser's auth state, keyed by its own token AND its cookie.
 
     Returns True when a row for this browser exists afterwards, False when
-    nothing was written. The False paths matter: a sign-in landing on one
-    (no readable cookie yet — the iframe that writes it may not have run) must
-    be healable on a later run, and `main()` uses this return for exactly that.
+    nothing was written. A sign-in landing on False (no token, or an
+    unwritable store) must be healable on a later run, and `main()` uses this
+    return for exactly that.
+
+    The row is bound to the `client_id` held in session_state — a fresh
+    secret per browser that never appears in the URL. It is deliberately NOT
+    required that the browser has echoed the cookie back yet: `st.context`
+    only reflects the cookies of the *initial* websocket handshake, so a
+    cookie written during this visit is invisible to the server until a fresh
+    page load. Demanding readability at write time made every sign-in's write
+    a silent skip and every refresh a logout. The check that actually stops a
+    shared link — token AND cookie must match the row — lives in
+    `_restore_session`, where both values are verifiable, and is unchanged.
 
     A no-op under AppTest, where query params and the websocket are both
     synthetic: there is no browser to keep signed in, and honouring the row
@@ -388,10 +435,11 @@ def _persist_session(username: str, payload: dict) -> bool:
     if not token:
         return False
     client_id = st.session_state.get(_CLIENT_COOKIE, "")
-    if not client_id or not _read_client_cookie():
-        # No readable cookie on this browser, so there is nothing to bind the
-        # row to. Writing it unbound would create exactly the session a shared
-        # link can hijack, which is what this column exists to prevent.
+    if not client_id:
+        return False
+    _claim_token_for(username)
+    token = st.session_state.get(_SESSION_TOKEN_KEY, "")
+    if not token:
         return False
     now = time.time()
     try:
@@ -461,14 +509,15 @@ def _restore_session() -> None:
     if not token:
         return
     if not client_id:
-        # A token with no readable cookie is either a brand-new browser or
-        # somebody else's link. Neither may be restored, and the token is
-        # discarded so it stops travelling through this browser's URLs. The
-        # reason is recorded (not the token, never any account detail) so the
-        # login page can say what happened instead of silently landing there —
-        # a cookie-blocked user otherwise debugs a mystery.
-        st.session_state["_restore_note"] = "no_cookie"
-        _drop_token_from_url()
+        # No readable cookie. This proves nothing either way: `st.context`
+        # only carries the cookies of the initial websocket handshake, so any
+        # cookie written during this visit is invisible until a fresh page
+        # load — and a genuinely foreign link looks exactly the same. Either
+        # way the safe action is identical (restore nothing) and, crucially,
+        # the token is LEFT in the URL: dropping it here used to destroy
+        # legitimate mid-session tokens on every single rerun, guaranteeing
+        # the logout-on-refresh it was meant to tidy up. A foreign token
+        # simply matches no row, on this run and every later one.
         return
     try:
         conn = db.get_db()
@@ -479,7 +528,6 @@ def _restore_session() -> None:
             (token, client_id, time.time() - SESSION_TTL_SECONDS),
         ).fetchone()
         if not row:
-            st.session_state["_restore_note"] = "no_row"
             _drop_token_from_url()
             return
         conn.execute("UPDATE web_sessions SET seen_at = ? WHERE token = ?",
@@ -723,16 +771,15 @@ def main():
     user = st.session_state["user"]
     username = st.session_state["username"]
 
-    # Heal a persist that never landed. `_persist_session` runs at sign-in, but
-    # it must skip when the browser's cookie is not readable yet — the iframe
-    # that writes it may not have executed on that exact run. Previously that
-    # miss was permanent: nothing ever retried, so every later refresh dropped
-    # the user on the login page until they signed in again. Retrying here,
-    # once per browser session, closes that hole: the first run with a readable
-    # cookie writes the row, the flag stops further writes, and a refresh wipes
-    # the flag so a genuinely missing row is rewritten rather than mourned.
-    # The binding is unchanged — a row is still only ever written when BOTH the
-    # URL token and the cookie are readable in this browser.
+    # Heal a persist that never landed. Sign-in and registration both persist,
+    # but a store hiccup on that exact run (or any older path that signed in
+    # without persisting) would otherwise mean every later refresh drops the
+    # user until they sign in again. Retrying here, once per browser session,
+    # closes that hole: the first run that can write does, the flag stops
+    # further writes, and a refresh wipes the flag so a genuinely missing row
+    # is rewritten rather than mourned. The binding is unchanged — the write
+    # still carries this browser's own token and client id, and restore still
+    # requires both to match.
     if not _is_test_run() and not st.session_state.get("_session_persist_ok"):
         try:
             if _persist_session(username, {"t": time.time()}):

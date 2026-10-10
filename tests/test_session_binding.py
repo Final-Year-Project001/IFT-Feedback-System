@@ -176,27 +176,39 @@ check("a row with no client_id cannot be restored by any client",
       "a pre-binding row was honoured, which means trusting a bare URL token")
 
 # ══════════════════════════════════════════════════════════════════════
-section("4. Nothing was written unbound")
+section("4. What the write side may and may not do")
 # ══════════════════════════════════════════════════════════════════════
+# The write side binds the row to the client id held in session_state — a
+# fresh secret per browser that never appears in the URL. It deliberately does
+# NOT require the browser to have echoed the cookie back yet: `st.context`
+# only carries the cookies of the initial websocket handshake, so a cookie
+# written during the visit is invisible until a fresh page load, and demanding
+# readability at write time made every sign-in's write a silent skip (hence
+# logout-on-refresh with no row to restore). The check that stops a shared
+# link lives at READ time (section 5), where both values are verifiable.
 
 persist_src = src.split("def _persist_session")[1].split("\ndef ")[0]
-check("_persist_session returns early when there is no readable cookie",
-      "_read_client_cookie()" in persist_src and "return" in persist_src)
-check("...and that check comes before the INSERT",
-      persist_src.index("_read_client_cookie()") < persist_src.index("INSERT")
-      if "INSERT" in persist_src else True)
+check("_persist_session refuses to write with no token or no client id",
+      "if not token" in persist_src and "if not client_id" in persist_src)
+check("...but does not demand the cookie be echoed back first",
+      "_read_client_cookie()" not in persist_src,
+      "a readability gate at write time reintroduces logout-on-refresh")
 check("the row it writes carries the client_id column",
       "client_id" in persist_src and "client_id = excluded.client_id" in persist_src)
+check("signing in under a token owned by someone else mints a fresh one",
+      "_claim_token_for" in persist_src, "a receiver reusing a link's token "
+      "would otherwise overwrite the sender's row with their own account")
 
 # ══════════════════════════════════════════════════════════════════════
 section("5. Failing closed")
 # ══════════════════════════════════════════════════════════════════════
 
 restore_src = src.split("def _restore_session")[1].split("\ndef ")[0]
-check("_restore_session drops the token when there is no cookie",
-      "_drop_token_from_url()" in restore_src)
-check("...and also when the row is simply not found",
-      restore_src.count("_drop_token_from_url()") >= 2,
+check("a missing cookie restores nothing but leaves the URL alone",
+      "_drop_token_from_url()" in restore_src
+      and "if not client_id:" in restore_src)
+check("...the token is dropped only when cookie AND token match no row",
+      restore_src.count("_drop_token_from_url()") == 1,
       restore_src.count("_drop_token_from_url()"))
 check("the match requires the client_id, not just the token",
       "client_id = ?" in restore_src)
@@ -204,8 +216,10 @@ check("no path restores on the token alone",
       "WHERE token = ? AND" not in restore_src.replace("WHERE token = ? AND client_id", "X"),
       "a restore query matches on the token only")
 
-# The safe direction: with cookies unavailable nothing persists, rather than
-# everything being restored on a bare token.
+# The safe direction is unchanged: without the cookie nothing is restored.
+# What changed is that a missing cookie no longer destroys the token to prove
+# it — mid-session the snapshot is simply stale, so absence proves nothing and
+# only the row match may discard anything.
 check("session_status reports which mode is in force",
       "browser_cookie_bound" in src and "def session_status" in src)
 status = appmod.session_status()

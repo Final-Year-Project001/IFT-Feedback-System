@@ -1344,7 +1344,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
    ═══════════════════════════ */
 .semester-picker {
     background: rgba(37,99,235,.04); border: 1px solid rgba(37,99,235,.14);
-    border-radius: var(--radius-sm); padding: .8rem 1rem; margin-bottom: .6rem;
+    border-radius: var(--radius-sm); padding: .8rem 1rem; margin-bottom: .35rem;
 }
 .semester-picker-label {
     display: flex; align-items: center; gap: .45rem;
@@ -1352,22 +1352,24 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 .semester-picker-hint { font-size: .74rem; color: var(--text-3); margin-top: .2rem; line-height: 1.5; }
 .semester-gate {
-    text-align: center; padding: 1.6rem 1.2rem 1.4rem;
+    text-align: center; padding: 1.25rem 1.2rem 1.15rem;
     background: var(--navy-card); border: 1px solid var(--navy-border);
     border-radius: var(--radius-lg);
     /* A full-bleed explanation panel reads as an error page; centred and
-       capped it reads as a calm empty state with one clear action. */
-    max-width: 780px; margin-left: auto; margin-right: auto;
+       capped it reads as a calm empty state with one clear action. Compact
+       padding throughout: the card carries one icon, one line of heading
+       and three lines of text, so tall air around them reads as broken. */
+    max-width: 780px; margin: .5rem auto 0 auto;
 }
 .semester-gate-icon {
-    width: 64px; height: 64px; margin: 0 auto .9rem;
+    width: 48px; height: 48px; margin: 0 auto .7rem;
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
     background: rgba(217,119,6,.13);
 }
-.semester-gate-title { font-size: 1.05rem; font-weight: 800; color: var(--text-1); margin-bottom: .4rem; }
-.semester-gate-text { font-size: .85rem; line-height: 1.7; color: var(--text-2); max-width: 620px; margin: 0 auto; }
+.semester-gate-title { font-size: 1rem; font-weight: 800; color: var(--text-1); margin-bottom: .35rem; }
+.semester-gate-text { font-size: .83rem; line-height: 1.65; color: var(--text-2); max-width: 620px; margin: 0 auto; }
 @media screen and (max-width: 576px) {
-    .semester-gate { padding: 1.2rem 1rem 1.1rem; }
+    .semester-gate { padding: 1.1rem .95rem 1rem; }
     .semester-gate-title { font-size: .95rem; }
     .semester-gate-text { font-size: .8rem; }
 }
