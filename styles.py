@@ -2019,7 +2019,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
    Desktop-only by request: below the column-stacking breakpoint the page
    already reads top-to-bottom and needs no pointer. No animation — a static
    cue carries no motion-gate obligations. */
-.login-scroll-hint {
+.login-scroll-hint-desktop {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2030,7 +2030,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     font-weight: 600;
 }
 @media screen and (max-width: 700px) {
-    .login-scroll-hint { display: none; }
+    .login-scroll-hint-desktop { display: none; }
 }
 
 .login-form-header {

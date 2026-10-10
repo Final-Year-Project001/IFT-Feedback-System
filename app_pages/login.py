@@ -404,8 +404,9 @@ def _show_student_signin():
             '</div>'
             '</div>'
             '</div>'
-            f'<div class="login-scroll-hint">{i("chevron-down", 14, "#2563eb")}'
+            f'<div class="login-scroll-hint-desktop">{i("chevron-down", 14, "#2563eb")}'
             '<span>Scroll down to log in</span></div>'
+            '</div>'
             '</div>',
             unsafe_allow_html=True,
         )
