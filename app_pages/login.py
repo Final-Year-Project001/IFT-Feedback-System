@@ -271,8 +271,8 @@ def _show_student_signin():
         # desktop — where the login form sits beside this column and there is
         # nothing to scroll to — and only revealed by the phone breakpoint.
         st.markdown(
-            '<p class="login-subtitle">Empowering FUTO IFT students with intelligent, transparent feedback channels. '
-            'Submissions are analyzed in real time by domain-specialized AI to drive actionable departmental improvements.</p>'
+            '<p class="login-subtitle">Empowering FUTO IFT students with transparent, structured feedback channels. '
+            'Every 1&ndash;5 rating feeds live dashboards and decision insights that drive actionable departmental improvements.</p>'
             '<div class="login-scroll-hint">'
             f'{i("chevron-down", 16, "#2563eb")}'
             '<span>Scroll down to access the login form</span>'
