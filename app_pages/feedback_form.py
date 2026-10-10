@@ -410,6 +410,11 @@ def _render_inactive_semester_gate(active_sess: str, chosen: str, active_semeste
         f'</div>',
         unsafe_allow_html=True,
     )
+    # Explicit air between the card and the action. Streamlit's own vertical
+    # rhythm varies across versions (here: none at all — the button rendered
+    # glued to the card's bottom edge), so the gap is drawn deliberately
+    # rather than inherited. Same inline-spacer pattern used elsewhere.
+    st.markdown("<div style='height:.9rem;'></div>", unsafe_allow_html=True)
     # Centred and moderate: a full-bleed gradient bar reads as a banner, not
     # an action. The middle column carries the button; the gutters collapse
     # on a phone, where full width is correct again.
