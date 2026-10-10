@@ -286,23 +286,19 @@ def _read_client_cookie() -> str:
         return ""
 
 
-def _mint_client_cookie() -> None:
-    """Write a fresh client id into this browser's cookie.
+def _mount_client_cookie(value: str) -> None:
+    """Instructs the browser to hold `value` as our client cookie.
 
-    Streamlit's Python API can read cookies but not set them, so the write is
-    done in the page through a same-origin component iframe — Streamlit mounts
-    it with `allow-scripts allow-same-origin`, which is exactly the combination
-    that lets `document.cookie` reach the app's own origin.
-
-    The value is also kept in `session_state` so that everything downstream in
-    *this* run agrees on one id. The cookie is what the next run reads back, and
-    it only becomes readable once the browser has loaded the component — which
-    is why a first-time visitor cannot be signed in by a token they did not earn.
+    Split out from `_mint_client_cookie` on purpose: minting (choosing a new
+    secret) must happen ONCE per browser, while mounting (telling the browser
+    the current secret) must happen on every run that cannot see a cookie —
+    the stored secret and the browser's copy only converge if the current
+    value is re-asserted. Mounting never changes the value, so unlike minting
+    it cannot desynchronise the persisted row; re-asserting the same value the
+    browser already holds is a harmless no-op there.
     """
-    if _is_test_run():
+    if _is_test_run() or not value:
         return
-    value = secrets.token_urlsafe(32)
-    st.session_state[_CLIENT_COOKIE] = value
     try:
         import streamlit.components.v1 as components
         components.html(
@@ -317,13 +313,49 @@ def _mint_client_cookie() -> None:
         pass
 
 
+def _mint_client_cookie() -> None:
+    """Write a fresh client id into this browser's cookie.
+
+    Streamlit's Python API can read cookies but not set them, so the write is
+    done in the page through a same-origin component iframe — Streamlit mounts
+    it with `allow-scripts allow-same-origin`, which is exactly the combination
+    that lets `document.cookie` reach the app's own origin.
+
+    The value is also kept in `session_state` so that everything downstream in
+    *this* run agrees on one id. The cookie is what the next FRESH LOAD reads
+    back (a mid-session rerun still sees only the handshake snapshot) — which
+    is why a first-time visitor cannot be signed in by a token they did not earn.
+    """
+    if _is_test_run():
+        return
+    value = secrets.token_urlsafe(32)
+    st.session_state[_CLIENT_COOKIE] = value
+    _mount_client_cookie(value)
+
+
 def session_status() -> dict:
-    """Which persistence mode this browser is in. Surfaced in the admin health panel."""
-    client = _read_client_cookie()
+    """Which persistence mode this browser is in. Surfaced in the admin health panel.
+
+    Two separate facts, because they answer different questions: what the
+    server can see *right now* (the handshake snapshot — empty on every
+    mid-session rerun even when the browser holds the cookie), and what this
+    tab session holds (the secret a refresh will be restored against, once the
+    browser has echoed it back). Either one present means a refresh can
+    restore; neither means the next refresh starts at the login page.
+    """
+    seen = bool(_read_client_cookie())
+    try:
+        held = bool(st.session_state.get(_CLIENT_COOKIE, ""))
+    except Exception:
+        # No session context at all (a bare `import app`): nothing is held.
+        held = False
     return {
         "url_token_bound": True,
-        "browser_cookie_bound": bool(client),
-        "mode": "token + browser cookie" if client else "not bound yet (sign-in must be repeated)",
+        "browser_cookie_bound": seen,
+        "session_holds_id": held,
+        "mode": ("token + browser cookie" if seen
+                 else "token held, cookie syncing" if held
+                 else "not bound yet (sign-in must be repeated)"),
         "cookie_name": _CLIENT_COOKIE,
     }
 
@@ -503,9 +535,14 @@ def _restore_session() -> None:
     except Exception:
         token = ""
     client_id = _read_client_cookie()
-    # Mirror into session_state so downstream code in this run sees them.
+    # Mirror into session_state so downstream code in this run sees them —
+    # but only ADOPT non-empty values. Blanket-overwriting here used to blank
+    # an established client id on every mid-session rerun (whose handshake
+    # snapshot carries no cookies), desynchronising the persisted row exactly
+    # the way re-minting did.
     st.session_state[_SESSION_TOKEN_KEY] = token
-    st.session_state[_CLIENT_COOKIE] = client_id
+    if client_id:
+        st.session_state[_CLIENT_COOKIE] = client_id
     if not token:
         return
     if not client_id:
@@ -572,14 +609,37 @@ def _forget_session() -> None:
 
 
 # Establish the browser identity before anything reads a token, because the
-# restore below needs both. The cookie is read first; only when the browser has
-# none does the component get mounted to write one. Reading first avoids
-# re-minting on every single page render.
-_client_from_cookie = _read_client_cookie()
-if _client_from_cookie:
-    st.session_state[_CLIENT_COOKIE] = _client_from_cookie
-elif not _is_test_run():
-    _mint_client_cookie()
+# restore below needs both. Three cases, and the order is the logic:
+#
+#   1. The handshake carries a cookie AND this tab session holds nothing:
+#      a fresh load by a returning browser — adopt the jar's value.
+#   2. This tab session holds nothing and there is nothing to adopt: a
+#      genuinely new browser — mint once and mount it.
+#   3. This tab session already holds an id: adopt nothing (a jar value here
+#      could be another tab's), mint nothing (re-minting every run churned the
+#      browser's cookie out from under the persisted row, which is what made
+#      every refresh log the user out) — but DO re-mount the held value, so a
+#      jar that never received it (claim-mint, slow iframe, cleared cookies)
+#      converges onto it. Re-asserting an identical value is a no-op where the
+#      browser already holds it.
+def _establish_browser_identity() -> None:
+    _client_from_cookie = _read_client_cookie()
+    try:
+        _held_id = st.session_state.get(_CLIENT_COOKIE, "")
+    except Exception:
+        # No session context at all (a bare `import app`): behave as a tab
+        # session holding nothing, and let `_is_test_run()` decide below.
+        _held_id = ""
+    if _client_from_cookie and not _held_id:
+        st.session_state[_CLIENT_COOKIE] = _client_from_cookie
+    elif not _held_id:
+        if not _is_test_run():
+            _mint_client_cookie()
+    elif not _is_test_run() and not _client_from_cookie:
+        _mount_client_cookie(_held_id)
+
+
+_establish_browser_identity()
 
 # Put this browser's token into session_state FIRST, so both `_restore_session`
 # and any later `_persist_session` in this same run agree on the key.

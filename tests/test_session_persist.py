@@ -253,6 +253,46 @@ check("...with the new account bound under the fresh token",
 check("no exception in the claim path",
       not list(atc.exception), [str(e.value)[:120] for e in atc.exception])
 
+PROBE_STABLE = os.path.join(TMP, "probe_stable.py")
+with open(PROBE_STABLE, "w", encoding="utf-8") as fh:
+    fh.write(
+        "import sys\n"
+        f"sys.path.insert(0, {ROOT!r})\n"
+        "import streamlit as st\n"
+        "import db\n"
+        f"db.DB_PATH = {COPY!r}\n"
+        "db.get_db.clear()\n"
+        "import app as appmod\n"
+        "appmod._is_test_run = lambda: False\n"
+        # Frozen handshake snapshot: the jar may hold anything by now, but the
+        # server cannot see it mid-visit. Three consecutive runs must not move
+        # the held id a millimetre - that churn is what broke every refresh.
+        "appmod._read_client_cookie = lambda: ''\n"
+        "st.session_state[appmod._CLIENT_COOKIE] = 'stable-client-7'\n"
+        "appmod._establish_browser_identity()\n"
+        "after_first = st.session_state.get(appmod._CLIENT_COOKIE)\n"
+        "appmod._establish_browser_identity()\n"
+        "appmod._establish_browser_identity()\n"
+        "after_third = st.session_state.get(appmod._CLIENT_COOKIE)\n"
+        "st.session_state.pop(appmod._CLIENT_COOKIE, None)\n"
+        "appmod._read_client_cookie = lambda: 'jar-client-9'\n"
+        "appmod._establish_browser_identity()\n"
+        "adopted = st.session_state.get(appmod._CLIENT_COOKIE)\n"
+        "st.session_state['probe_out'] = {\n"
+        "    'stable': after_first == 'stable-client-7' == after_third,\n"
+        "    'adopted': adopted,\n"
+        "}\n"
+    )
+
+ats = AppTest.from_file(PROBE_STABLE, default_timeout=120).run()
+outs = dict(ats.session_state.get("probe_out") or {})
+check("reruns never churn an established client id",
+      outs.get("stable") is True, outs)
+check("...while a fresh load still adopts the jar's value",
+      outs.get("adopted") == "jar-client-9", outs)
+check("no exception in the identity path",
+      not list(ats.exception), [str(e.value)[:120] for e in ats.exception])
+
 PROBE_RESTORE = os.path.join(TMP, "probe_restore.py")
 with open(PROBE_RESTORE, "w", encoding="utf-8") as fh:
     fh.write(

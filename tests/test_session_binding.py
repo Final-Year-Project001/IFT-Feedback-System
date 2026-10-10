@@ -154,7 +154,27 @@ check("the client id is minted from a CSPRNG, not derived from the token",
       "secrets.token_urlsafe" in src.split("def _mint_client_cookie")[1][:900])
 check("minting and reading use different sources, so one cannot copy the other",
       "secrets.token_urlsafe" in src.split("def _mint_client_cookie")[1][:900]
-      and "document.cookie" in src.split("def _mint_client_cookie")[1][:900])
+      and "document.cookie" in src.split("def _mount_client_cookie")[1][:900])
+check("mounting re-asserts the held value without minting a new one",
+      "token_urlsafe" not in src.split("def _mount_client_cookie")[1][:900])
+
+# ══════════════════════════════════════════════════════════════
+section("2b. An established id is never churned mid-session")
+# ══════════════════════════════════════════════════════════════
+
+# Re-minting on every cookieless rerun rewrote the browser's cookie out from
+# under the persisted row, so the next refresh could never match it — the
+# logout-on-refresh this project kept seeing. Minting happens only when the
+# tab session holds nothing; anything held is kept, and the jar is converged
+# onto it by re-mounting instead.
+check("a held id is adopted, never overwritten, from the handshake cookie",
+      "if _client_from_cookie and not _held_id:" in src)
+check("minting happens only when the tab holds nothing",
+      "elif not _held_id:" in src)
+check("...and a held id is re-mounted rather than replaced",
+      "_mount_client_cookie(_held_id)" in src)
+check("restore only adopts a non-empty cookie, never blanks a held id",
+      "if client_id:\n        st.session_state[_CLIENT_COOKIE] = client_id" in src)
 
 # ══════════════════════════════════════════════════════════════════════
 section("3. Rows from before this change cannot be honoured")
