@@ -1854,7 +1854,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     width: 60px;
     height: 60px;
     border-radius: 50%;
-    background: conic-gradient(#2563eb 0% 45%, #06b6d4 45% 72%, #7c3aed 72% 100%);
+    background: conic-gradient(#10b981 0% 64%, #f59e0b 64% 84%, #ef4444 84% 100%);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1885,6 +1885,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     border-radius: 50%;
     display: inline-block;
 }
+.dot-green { background: #10b981; }
+.dot-amber { background: #f59e0b; }
+.dot-red { background: #ef4444; }
 .dot-blue { background: #2563eb; }
 .dot-cyan { background: #06b6d4; }
 .dot-purple { background: #7c3aed; }

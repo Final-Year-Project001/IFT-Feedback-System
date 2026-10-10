@@ -200,6 +200,48 @@ def _do_login_by_email(email, password):
 #  SIGN IN
 # ══════════════════════════════════════════════════════════════
 
+def _top_rated_course() -> str:
+    """Short course code with the highest average rating, or "—" if none.
+
+    Read live from Course Content submissions (all sessions — the tile names
+    no session, so the aggregate is the honest scope), combining levels by
+    response-weighted average and breaking ties by response count. A preview
+    tile showing a hardcoded course would be caught by the first examiner who
+    compares it with the dashboard; this way the two can never disagree.
+    Anything unreadable (empty table, bad rows, a down database) degrades to
+    the em dash rather than taking the login page with it.
+    """
+    import re
+
+    try:
+        rows = db.course_summary()
+    except Exception:
+        return "—"
+    combined: dict[str, list[float]] = {}
+    for entry in rows or []:
+        name = str((entry or {}).get("course") or "").strip()
+        if not name:
+            continue
+        try:
+            avg = float(entry.get("avg_rating"))
+            n = int(entry.get("responses") or 0)
+        except (TypeError, ValueError):
+            continue
+        if n <= 0:
+            continue
+        slot = combined.setdefault(name, [0.0, 0])
+        slot[0] += avg * n
+        slot[1] += n
+    best, best_avg, best_n = "", -1.0, -1
+    for name, (weighted, n) in combined.items():
+        avg = weighted / n
+        if (avg, n) > (best_avg, best_n):
+            best, best_avg, best_n = name, avg, n
+    if not best:
+        return "—"
+    return re.split(r"\s+[–—-]\s+", best, maxsplit=1)[0].strip() or "—"
+
+
 def _show_student_signin():
     left_col, right_col = st.columns([1.2, 0.8], gap="large")
 
@@ -255,54 +297,73 @@ def _show_student_signin():
         st.markdown("</div>", unsafe_allow_html=True)
 
     with right_col:
+        # The preview mirrors live system data, not demo text: the top course
+        # is read from actual submissions just above, and escaped at the point
+        # of interpolation like every other database string in HTML.
+        _top_course = _top_rated_course()
         st.markdown(
             '<div class="login-form-header"><div class="login-form-header-bar"></div>'
             '<div class="login-form-header-tag">STUDENT PORTAL</div>'
             '<h2>Welcome back</h2>'
             '<div class="login-preview-card">'
-            '<!-- Tile 1: Line charts -->'
+            '<!-- Tile 1: Rating Distribution Bar Chart -->'
             '<div class="login-preview-tile">'
-            '<div class="preview-tile-title">Line charts</div>'
+            '<div class="preview-tile-title">Rating Distribution</div>'
             '<svg viewBox="0 0 200 100" class="preview-chart-svg" preserveAspectRatio="none">'
             '<defs>'
-            '<linearGradient id="chartLineGrad" x1="0" y1="0" x2="0" y2="1">'
-            '<stop offset="0%" stop-color="#2563eb" stop-opacity="0.25"/>'
-            '<stop offset="100%" stop-color="#2563eb" stop-opacity="0.0"/>'
+            '<linearGradient id="barGrad1" x1="0" y1="0" x2="0" y2="1">'
+            '<stop offset="0%" stop-color="#f87171"/>'
+            '<stop offset="100%" stop-color="#ef4444"/>'
+            '</linearGradient>'
+            '<linearGradient id="barGrad2" x1="0" y1="0" x2="0" y2="1">'
+            '<stop offset="0%" stop-color="#fb923c"/>'
+            '<stop offset="100%" stop-color="#f97316"/>'
+            '</linearGradient>'
+            '<linearGradient id="barGrad3" x1="0" y1="0" x2="0" y2="1">'
+            '<stop offset="0%" stop-color="#fbbf24"/>'
+            '<stop offset="100%" stop-color="#f59e0b"/>'
+            '</linearGradient>'
+            '<linearGradient id="barGrad4" x1="0" y1="0" x2="0" y2="1">'
+            '<stop offset="0%" stop-color="#4ade80"/>'
+            '<stop offset="100%" stop-color="#22c55e"/>'
+            '</linearGradient>'
+            '<linearGradient id="barGrad5" x1="0" y1="0" x2="0" y2="1">'
+            '<stop offset="0%" stop-color="#34d399"/>'
+            '<stop offset="100%" stop-color="#10b981"/>'
             '</linearGradient>'
             '</defs>'
-            '<text x="5" y="15" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">150</text>'
-            '<line x1="22" y1="13" x2="195" y2="13" stroke="#f1f5f9" stroke-width="1"/>'
-            '<text x="5" y="32" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">120</text>'
-            '<line x1="22" y1="30" x2="195" y2="30" stroke="#f1f5f9" stroke-width="1"/>'
-            '<text x="9" y="49" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">90</text>'
-            '<line x1="22" y1="47" x2="195" y2="47" stroke="#f1f5f9" stroke-width="1"/>'
-            '<text x="9" y="66" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">60</text>'
-            '<line x1="22" y1="64" x2="195" y2="64" stroke="#f1f5f9" stroke-width="1"/>'
-            '<text x="9" y="83" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">30</text>'
-            '<line x1="22" y1="81" x2="195" y2="81" stroke="#f1f5f9" stroke-width="1"/>'
-            '<text x="13" y="96" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">0</text>'
-            '<line x1="22" y1="95" x2="195" y2="95" stroke="#e2e8f0" stroke-width="1"/>'
-            '<path d="M 22,95 C 32,80 40,60 50,60 C 62,60 70,82 82,82 C 94,82 104,70 114,68 C 124,66 132,54 142,54 C 152,54 158,74 168,74 C 178,74 186,40 195,24 L 195,95 Z" fill="url(#chartLineGrad)"/>'
-            '<path d="M 22,95 C 32,80 40,60 50,60 C 62,60 70,82 82,82 C 94,82 104,70 114,68 C 124,66 132,54 142,54 C 152,54 158,74 168,74 C 178,74 186,40 195,24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'
-            '<text x="25" y="99" font-size="6" fill="#94a3b8" font-family="Sora, sans-serif">Sun</text>'
-            '<text x="65" y="99" font-size="6" fill="#94a3b8" font-family="Sora, sans-serif">May</text>'
-            '<text x="105" y="99" font-size="6" fill="#94a3b8" font-family="Sora, sans-serif">Jul</text>'
-            '<text x="145" y="99" font-size="6" fill="#94a3b8" font-family="Sora, sans-serif">Sep</text>'
-            '<text x="180" y="99" font-size="6" fill="#94a3b8" font-family="Sora, sans-serif">Nov</text>'
+            '<text x="6" y="19" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">100</text>'
+            '<line x1="22" y1="17" x2="195" y2="17" stroke="#f1f5f9" stroke-width="1"/>'
+            '<text x="9" y="42" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">60</text>'
+            '<line x1="22" y1="40" x2="195" y2="40" stroke="#f1f5f9" stroke-width="1"/>'
+            '<text x="9" y="65" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">20</text>'
+            '<line x1="22" y1="63" x2="195" y2="63" stroke="#f1f5f9" stroke-width="1"/>'
+            '<text x="13" y="87" font-size="6.5" fill="#94a3b8" font-family="Sora, sans-serif">0</text>'
+            '<line x1="22" y1="85" x2="195" y2="85" stroke="#e2e8f0" stroke-width="1"/>'
+            '<rect x="32" y="72" width="22" height="13" rx="3" fill="url(#barGrad1)"/>'
+            '<rect x="66" y="62" width="22" height="23" rx="3" fill="url(#barGrad2)"/>'
+            '<rect x="100" y="48" width="22" height="37" rx="3" fill="url(#barGrad3)"/>'
+            '<rect x="134" y="30" width="22" height="55" rx="3" fill="url(#barGrad4)"/>'
+            '<rect x="168" y="17" width="22" height="68" rx="3" fill="url(#barGrad5)"/>'
+            '<text x="43" y="95" text-anchor="middle" font-size="6.5" font-weight="700" fill="#64748b" font-family="Sora, sans-serif">1★</text>'
+            '<text x="77" y="95" text-anchor="middle" font-size="6.5" font-weight="700" fill="#64748b" font-family="Sora, sans-serif">2★</text>'
+            '<text x="111" y="95" text-anchor="middle" font-size="6.5" font-weight="700" fill="#64748b" font-family="Sora, sans-serif">3★</text>'
+            '<text x="145" y="95" text-anchor="middle" font-size="6.5" font-weight="700" fill="#64748b" font-family="Sora, sans-serif">4★</text>'
+            '<text x="179" y="95" text-anchor="middle" font-size="6.5" font-weight="700" fill="#64748b" font-family="Sora, sans-serif">5★</text>'
             '</svg>'
             '</div>'
-            '<!-- Tile 2: Key Sentiment Score -->'
+            '<!-- Tile 2: Sentiment Analysis -->'
             '<div class="login-preview-tile" style="text-align:center;">'
-            '<div class="preview-tile-title" style="text-align:left;">Key Sentiment Score</div>'
+            '<div class="preview-tile-title" style="text-align:left;">Sentiment Analysis</div>'
             '<div class="sentiment-donut-wrap">'
             '<div class="sentiment-donut-pie">'
             '<div class="sentiment-donut-hole"></div>'
             '</div>'
             '</div>'
             '<div class="sentiment-legend">'
-            '<span class="legend-item"><span class="legend-dot dot-blue"></span>Best</span>'
-            '<span class="legend-item"><span class="legend-dot dot-cyan"></span>Good</span>'
-            '<span class="legend-item"><span class="legend-dot dot-purple"></span>Poor</span>'
+            '<span class="legend-item"><span class="legend-dot dot-green"></span>Positive</span>'
+            '<span class="legend-item"><span class="legend-dot dot-amber"></span>Neutral</span>'
+            '<span class="legend-item"><span class="legend-dot dot-red"></span>Negative</span>'
             '</div>'
             '</div>'
             '<!-- Tile 3: Stacked Stat Cards -->'
@@ -312,8 +373,8 @@ def _show_student_signin():
             '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>'
             '</div>'
             '<div>'
-            '<div class="preview-stat-value">90%</div>'
-            '<div class="preview-stat-label">Sentiment</div>'
+            '<div class="preview-stat-value">88%</div>'
+            '<div class="preview-stat-label">Positive Sentiment</div>'
             '</div>'
             '</div>'
             '<div class="preview-stat-card preview-stat-card-topcourse">'
@@ -323,8 +384,8 @@ def _show_student_signin():
             '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>'
             '</div>'
             '<div>'
-            '<div class="preview-stat-value">26.%</div>'
-            '<div class="preview-stat-label">Mentions</div>'
+            f'<div class="preview-stat-value">{esc(_top_course)}</div>'
+            '<div class="preview-stat-label">Highest Rated</div>'
             '</div>'
             '</div>'
             '</div>'
