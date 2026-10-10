@@ -1815,7 +1815,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .login-preview-card {
     display: grid;
     gap: 0.65rem;
-    grid-template-columns: 1.8fr 1.35fr 1.35fr;
+    /* Two across with the stat pair as a full row beneath — never three
+       squeezed tracks. This card lives in the login form column (~40% of the
+       page), where three-across starves every tile to ~110px and legends and
+       stat text bleed past their tiles. Two tracks always have room; phones
+       stack to one via the breakpoints below. */
+    grid-template-columns: 1fr 1fr;
     background: var(--navy-card2);
     border: 1px solid var(--navy-border);
     border-radius: 16px;
@@ -1824,6 +1829,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     overflow-x: clip;
 }
 .login-preview-card > * { min-width: 0; }
+.login-preview-card .preview-stat-col {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.65rem;
+}
 .login-preview-tile {
     background: #ffffff;
     border: 1px solid var(--navy-border);
@@ -1839,6 +1850,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: .4rem;
     margin-bottom: 0.15rem;
 }
 .preview-tile-title {
@@ -1854,6 +1866,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     background: rgba(37,99,235,.08);
     padding: 0.1rem 0.38rem;
     border-radius: 999px;
+    /* A wrapping badge ("1–" over "5★") reads broken; one line always. */
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .preview-chart-svg {
     width: 100%;
@@ -1961,6 +1976,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     justify-content: space-between;
     flex: 1;
     min-width: 0;
+    /* Last line of defence: tile text clips with an ellipsis instead of
+       bleeding past the tile edge, whatever the viewport does. */
+    overflow: hidden;
 }
 .preview-stat-card-topcourse {
     display: flex;
@@ -1979,6 +1997,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     display: flex;
     align-items: center;
     gap: 0.55rem;
+    flex-wrap: wrap;
 }
 .preview-stat-details {
     min-width: 0;
@@ -2015,6 +2034,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     font-weight: 600;
     margin-top: 1px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .login-form-header {
