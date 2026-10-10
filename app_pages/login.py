@@ -420,7 +420,7 @@ def _show_student_signin():
             '</div>'
             f'<div class="login-scroll-hint">{i("chevron-down", 14, "#2563eb")}'
             '<span>Scroll down to log in</span></div>'
-            '<p>Enter your registered email address and password to access your feedback dashboard.</p></div>',
+            '</div>',
             unsafe_allow_html=True,
         )
         with st.form("student_login_form", clear_on_submit=False):
